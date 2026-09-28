@@ -9,6 +9,7 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_netif.h>
+#include <esp_system.h>
 #include <lwip/ip_addr.h>
 #include <nvs.h>
 #include <nvs_flash.h>
@@ -448,8 +449,20 @@ void WifiConfigurationAp::StartWebServer()
             // 获取当前对象
             auto *this_ = static_cast<WifiConfigurationAp *>(req->user_ctx);
             if (!this_->ConnectToWifi(ssid_str, password_str)) {
+                // The AP+STA connect test can lose DHCP broadcasts while a
+                // phone is attached to the hotspot. Save anyway and verify in
+                // pure STA mode after reboot; wrong credentials simply bring
+                // the config AP back.
+                ESP_LOGW(TAG, "Connect test failed; saving credentials and rebooting to retry in STA mode");
+                this_->Save(ssid_str, password_str);
                 cJSON_Delete(json);
-                httpd_resp_send(req, "{\"success\":false,\"error\":\"Failed to connect to the Access Point\"}", HTTPD_RESP_USE_STRLEN);
+                httpd_resp_set_type(req, "application/json");
+                httpd_resp_set_hdr(req, "Connection", "close");
+                httpd_resp_send(req, "{\"success\":true}", HTTPD_RESP_USE_STRLEN);
+                xTaskCreate([](void*) {
+                    vTaskDelay(pdMS_TO_TICKS(1500));
+                    esp_restart();
+                }, "wifi_reboot", 4096, nullptr, 5, nullptr);
                 return ESP_OK;
             }
 
