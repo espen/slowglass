@@ -5,6 +5,7 @@
 
 #include "rawdraw_ui_manager.h"
 // Include LVGL-containing header FIRST so font_engine.h detects LVGL types
+#include "page_config.h"
 #include "boards/zectrix-s3-epaper-4.2/custom_lcd_display.h"
 #include "rawdraw/style.h"
 #include "rawdraw/rawdraw.h"
@@ -196,24 +197,24 @@ void DrawMiniTimeText(uint8_t* fb, int width, int x, int y, const char* text, ra
 
 const char* RawDrawUiManager::GetPageTitle(RawDrawPageId page) {
     switch (page) {
-        case RawDrawPageId::Chat:     return "对话";
-        case RawDrawPageId::Ebook:    return "电子书";
-        case RawDrawPageId::Wifi:     return "WiFi状态";
-        case RawDrawPageId::Settings: return "设置";
-        case RawDrawPageId::Gallery:  return "相册";
-        case RawDrawPageId::Weather:  return "天气";
-        case RawDrawPageId::News:     return "热点";
-        case RawDrawPageId::WeatherDetail: return "天气详情";
-        case RawDrawPageId::PhotoDetail: return "照片详情";
-        case RawDrawPageId::LifeBar:  return "人生进度";
-        case RawDrawPageId::Almanac:  return "老黄历";
-        case RawDrawPageId::Log:      return "日志";
-        case RawDrawPageId::YearProgress: return "年度进度";
-        case RawDrawPageId::Calendar:   return "日历";
-        case RawDrawPageId::FontDebug:  return "对齐测试";
-        case RawDrawPageId::FontMetrics: return "字体指标";
-        case RawDrawPageId::APTransfer: return "传图模式";
-        default:               return "未知";
+        case RawDrawPageId::Chat:     return "Chat";
+        case RawDrawPageId::Ebook:    return "Ebook";
+        case RawDrawPageId::Wifi:     return "WiFi";
+        case RawDrawPageId::Settings: return "Settings";
+        case RawDrawPageId::Gallery:  return "Gallery";
+        case RawDrawPageId::Weather:  return "Weather";
+        case RawDrawPageId::News:     return "News";
+        case RawDrawPageId::WeatherDetail: return "Weather Detail";
+        case RawDrawPageId::PhotoDetail: return "Photo Detail";
+        case RawDrawPageId::LifeBar:  return "Life Progress";
+        case RawDrawPageId::Almanac:  return "Almanac";
+        case RawDrawPageId::Log:      return "Log";
+        case RawDrawPageId::YearProgress: return "Year Progress";
+        case RawDrawPageId::Calendar:   return "Calendar";
+        case RawDrawPageId::FontDebug:  return "Font Debug";
+        case RawDrawPageId::FontMetrics: return "Font Metrics";
+        case RawDrawPageId::APTransfer: return "Image Transfer";
+        default:               return "Unknown";
     }
 }
 
@@ -225,7 +226,7 @@ RawDrawUiManager::RawDrawUiManager()
     : lcd_(nullptr)
     , width_(Style::kScreenWidth)
     , height_(Style::kScreenHeight)
-    , current_page_(RawDrawPageId::Gallery)
+    , current_page_(pageconfig::HomePage())
     , refresh_cb_(nullptr)
     , full_refresh_pending_(false)
     , clock_(rawdraw::kClockX, rawdraw::kClockY, &font_zectrix_16_1)
@@ -306,7 +307,7 @@ RawDrawUiManager::RawDrawUiManager()
     ap_transfer_server_->SetSettingsChangedCallback([this](int slideshow_interval_minutes) {
         SetGallerySlideshowIntervalMinutes(slideshow_interval_minutes);
         UpdateSettingsItem(3, slideshow_interval_minutes <= 0
-            ? std::string("关闭")
+            ? std::string("Off")
             : std::to_string(slideshow_interval_minutes) + "min");
         RequestActivePageRefresh();
     });
@@ -320,7 +321,7 @@ RawDrawUiManager::RawDrawUiManager()
     });
 
     // Initialize status bar defaults
-    status_bar_data_.page_title = GetPageTitle(RawDrawPageId::Gallery);
+    status_bar_data_.page_title = GetPageTitle(current_page_);
     status_bar_data_.wifi_connected = false;
     status_bar_data_.server_connected = false;
     status_bar_data_.battery_level = -1;
@@ -644,19 +645,20 @@ bool RawDrawUiManager::TryDisplayCurrentPhotoRaw4Color() {
     return shown;
 }
 
-const std::array<RawDrawUiManager::QuickSwitchItem, 2>& RawDrawUiManager::GetQuickSwitchItems() {
-    static const std::array<QuickSwitchItem, 2> kItems = {{
-        {RawDrawPageId::Gallery, "相册", FA_SETTINGS_IMAGE},
-        {RawDrawPageId::Settings, "设置", FA_SETTINGS_GEAR},
-#if 0
-        // Hardware-only alignment pages are intentionally hidden from the
-        // user-facing quick switch. Keep the renderer code for calibration,
-        // but do not expose them in normal navigation.
-        {RawDrawPageId::FontDebug, "对齐测试", nullptr},
-        {RawDrawPageId::FontMetrics, "字体指标", nullptr},
-#endif
-    }};
-    return kItems;
+const std::vector<RawDrawUiManager::QuickSwitchItem>& RawDrawUiManager::GetQuickSwitchItems() {
+    // Rebuilt from NVS page config on every open so LAN API changes apply
+    // without a reboot. Only called from the UI thread.
+    quick_switch_items_.clear();
+    for (auto page : pageconfig::EnabledPages()) {
+        const char* icon = nullptr;
+        switch (page) {
+            case RawDrawPageId::Gallery:  icon = FA_SETTINGS_IMAGE; break;
+            case RawDrawPageId::Settings: icon = FA_SETTINGS_GEAR; break;
+            default: break;
+        }
+        quick_switch_items_.push_back({page, GetPageTitle(page), icon});
+    }
+    return quick_switch_items_;
 }
 
 void RawDrawUiManager::StartApTransferMode() {
@@ -673,19 +675,19 @@ void RawDrawUiManager::StopApTransferMode() {
     if (ap_transfer_server_) {
         ap_transfer_server_->Stop();
     }
-    SwitchPage(RawDrawPageId::Gallery);
+    SwitchPage(pageconfig::HomePage());
 }
 
 void RawDrawUiManager::ShowWifiConfigPage(const std::string& ssid,
                                           const std::string& password,
                                           const std::string& url) {
     if (ap_transfer_renderer_) {
-        ap_transfer_renderer_->SetInstructionContent("WiFi 配网",
+        ap_transfer_renderer_->SetInstructionContent("WiFi Setup",
                                                      ssid.empty() ? "ZecTrix" : ssid,
                                                      password,
                                                      url.empty() ? "http://192.168.4.1" : url,
-                                                     "连接热点后打开页面配置 WiFi",
-                                                     "长按 BOOT 退出");
+                                                     "Join hotspot, open page to set up WiFi",
+                                                     "Hold BOOT to exit");
         ap_transfer_renderer_->SetState(rawdraw::ApTransferRenderer::kWaitingForConnection,
                                         "192.168.4.1");
     }
@@ -871,7 +873,8 @@ void RawDrawUiManager::RenderAll(uint8_t* fb, int width, int height) {
         current_page_ == RawDrawPageId::Ebook &&
         ebook_renderer_ &&
         ebook_renderer_->IsPortraitReader();
-    const bool chrome_free_page = false;
+    // Weather is a full-bleed dashboard with its own header — no status bar.
+    const bool chrome_free_page = (current_page_ == RawDrawPageId::Weather);
 
     // Update central_text based on current page state
     status_bar_data_.central_text.clear();
@@ -884,7 +887,7 @@ void RawDrawUiManager::RenderAll(uint8_t* fb, int width, int height) {
     }
     if (current_page_ == RawDrawPageId::Calendar && calendar_renderer_) {
         char buf[32];
-        snprintf(buf, sizeof(buf), "%d年%d月 ← →",
+        snprintf(buf, sizeof(buf), "%d/%d ← →",
                  calendar_renderer_->GetYear(), calendar_renderer_->GetMonth());
         status_bar_data_.central_text = buf;
     }
@@ -991,7 +994,7 @@ void RawDrawUiManager::DrawStatusBar(uint8_t* fb, int width, int height) {
             } else {
                 int y = 0, m = 0, d = 0;
                 sscanf(status_bar_data_.server_date.c_str(), "%d-%d-%d", &y, &m, &d);
-                date_str = std::to_string(m) + "月" + std::to_string(d) + "日";
+                date_str = std::to_string(m) + "/" + std::to_string(d);
             }
             if (!status_bar_data_.server_weekday.empty()) {
                 date_str += " " + status_bar_data_.server_weekday;
@@ -1150,7 +1153,7 @@ void RawDrawUiManager::DrawQuickSwitchOverlay(uint8_t* fb, int width, int height
                                  Style::kBorderRadiusMD, shadow_style);
     rawdraw::DrawStyledRoundRect(fb, width, height, {overlay_x, overlay_y, overlay_w, overlay_h},
                                  Style::kBorderRadiusMD, modal_style);
-    const char* title = "快速切换";
+    const char* title = "Apps";
     const int title_w = rawdraw::MeasureTextWidth(title, title_font);
     rawdraw::DrawStyledText(fb, width, overlay_x + (overlay_w - title_w) / 2,
                             rawdraw::InkCenteredTextTopYInBox(title_font, title, overlay_y, titlebar_h, 0),
@@ -1227,8 +1230,8 @@ void RawDrawUiManager::DrawQuickSwitchOverlay(uint8_t* fb, int width, int height
 
     rawdraw::DrawHLine(fb, width, overlay_y + overlay_h - 24, overlay_x + 14, overlay_x + overlay_w - 14, border_style.border);
     rawdraw::DrawStyledText(fb, width, overlay_x + 18,
-                            rawdraw::InkCenteredTextTopYInBox(font, "UP/DN 选择  BOOT 进入", overlay_y + overlay_h - 24, 24, 0),
-                            "UP/DN 选择  BOOT 进入", font, text_style, height);
+                            rawdraw::InkCenteredTextTopYInBox(font, "UP/DN select  BOOT open", overlay_y + overlay_h - 24, 24, 0),
+                            "UP/DN select  BOOT open", font, text_style, height);
 }
 
 rawdraw::Rect RawDrawUiManager::GetQuickSwitchBounds() const {
