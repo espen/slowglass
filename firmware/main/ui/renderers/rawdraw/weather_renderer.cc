@@ -1,6 +1,18 @@
 /**
  * @file weather_renderer.cc
- * @brief Rawdraw weather page renderer for 400x300 EPD
+ * @brief Rawdraw weather dashboard for 400x300 BWRY EPD
+ *
+ * Layout (see design/mockup.html in the project root):
+ *   header  — city left, date right, heavy rule
+ *   hero    — large 7-segment temperature + condition, big drawn icon right
+ *   strip   — inverted "TOMORROW" band: tag, small icon, high/low, condition
+ *   footer  — MET Norway attribution + data timestamp
+ *
+ * Color semantics: YELLOW = sun & low temps, RED = precipitation & freezing,
+ * BLACK/WHITE = structure. Red only appears when the weather warrants it.
+ *
+ * The hero temperature is drawn as 7-segment digits with rects because the
+ * largest embedded text font is 24 px.
  */
 
 #include "weather_renderer.h"
@@ -9,122 +21,201 @@
 #include "rawdraw/layout_utils.h"
 #include "rawdraw/rawdraw.h"
 #include "rawdraw/style.h"
-#include "rawdraw/theme.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <vector>
+#include <string>
 
 // External font references
 extern const lv_font_t SourceHanSansSC_Regular_slim;
 extern const lv_font_t SourceHanSansSC_Medium_slim;
-extern const lv_font_t weather_icons_48;
 extern const lv_font_t weather_icons_16;
 
 namespace rawdraw {
 
 namespace {
 
-struct ForecastRenderItem {
-    std::string label;
-    std::string weather_text;
-    std::string icon_code;
-    int32_t temp_min = 0;
-    int32_t temp_max = 0;
+// ============================================================
+// 7-segment digits for the hero temperature
+// ============================================================
+
+// Segment bit order: A top, B top-right, C bottom-right, D bottom,
+// E bottom-left, F top-left, G middle
+constexpr uint8_t kSegments[10] = {
+    0b0111111,  // 0: ABCDEF
+    0b0000110,  // 1: BC
+    0b1011011,  // 2: ABDEG
+    0b1001111,  // 3: ABCDG
+    0b1100110,  // 4: BCFG
+    0b1101101,  // 5: ACDFG
+    0b1111101,  // 6: ACDEFG
+    0b0000111,  // 7: ABC
+    0b1111111,  // 8: all
+    0b1101111,  // 9: ABCDFG
 };
 
-std::string FitTextToWidth(const std::string& text, const lv_font_t* font, int max_width) {
-    if (!font || max_width <= 0 || text.empty()) return "";
-    if (MeasureTextWidth(text.c_str(), font) <= max_width) return text;
+struct DigitMetrics {
+    int w = 42;       // digit width
+    int h = 76;       // digit height
+    int t = 10;       // segment thickness
+    int gap = 10;     // spacing between digits
+};
 
-    std::string out;
-    const char* p = text.c_str();
-    while (*p) {
-        const char* start = p;
-        utf8_next(&p);
-        std::string next = out;
-        next.append(start, p - start);
-        if (MeasureTextWidth((next + "...").c_str(), font) > max_width) break;
-        out = std::move(next);
-    }
-    return out + "...";
+void DrawSegDigit(uint8_t* fb, int width, int x, int y, int digit, const DigitMetrics& m, Color c) {
+    if (digit < 0 || digit > 9) return;
+    const uint8_t s = kSegments[digit];
+    const int half = m.h / 2;
+    if (s & 0b0000001) DrawRect(fb, width, {x, y, m.w, m.t}, c);                              // A
+    if (s & 0b0000010) DrawRect(fb, width, {x + m.w - m.t, y, m.t, half}, c);                 // B
+    if (s & 0b0000100) DrawRect(fb, width, {x + m.w - m.t, y + half, m.t, m.h - half}, c);    // C
+    if (s & 0b0001000) DrawRect(fb, width, {x, y + m.h - m.t, m.w, m.t}, c);                  // D
+    if (s & 0b0010000) DrawRect(fb, width, {x, y + half, m.t, m.h - half}, c);                // E
+    if (s & 0b0100000) DrawRect(fb, width, {x, y, m.t, half}, c);                             // F
+    if (s & 0b1000000) DrawRect(fb, width, {x, y + half - m.t / 2, m.w, m.t}, c);             // G
 }
 
-const char* IconGlyphForCode(const std::string& icon_code, const std::string& weather_text) {
-    auto starts_with_digit = [](const std::string& value, int low, int high) -> bool {
-        if (value.empty()) return false;
-        int code = atoi(value.c_str());
-        return code >= low && code <= high;
-    };
-
-    if (starts_with_digit(icon_code, 100, 100) || weather_text.find("晴") != std::string::npos) {
-        return "\xef\x83\x9e";  // sun
+// Draws e.g. "-7°"; returns total width used
+int DrawSegTemperature(uint8_t* fb, int width, int x, int y, int temp, Color c) {
+    DigitMetrics m;
+    int cx = x;
+    if (temp < 0) {
+        DrawRect(fb, width, {cx, y + m.h / 2 - m.t / 2, m.w - 12, m.t}, c);  // minus
+        cx += m.w - 12 + m.gap;
+        temp = -temp;
     }
-    if (starts_with_digit(icon_code, 101, 103) || weather_text.find("多云") != std::string::npos ||
-        weather_text.find("晴间多云") != std::string::npos) {
-        return "\xef\x83\x82";  // cloud-sun-ish fallback
+    char digits[16];
+    snprintf(digits, sizeof(digits), "%d", temp);
+    for (const char* p = digits; *p; ++p) {
+        DrawSegDigit(fb, width, cx, y, *p - '0', m, c);
+        cx += m.w + m.gap;
     }
-    if (starts_with_digit(icon_code, 104, 104) || weather_text.find("阴") != std::string::npos) {
-        return "\xef\x83\x82";  // cloud
-    }
-    if (starts_with_digit(icon_code, 300, 399) || weather_text.find("雨") != std::string::npos) {
-        return "\xef\x83\xa9";  // rain
-    }
-    if (starts_with_digit(icon_code, 400, 499) || weather_text.find("雪") != std::string::npos) {
-        return "\xef\x8b\x9c";  // snow
-    }
-    if (starts_with_digit(icon_code, 500, 599) || weather_text.find("雾") != std::string::npos ||
-        weather_text.find("霾") != std::string::npos) {
-        return "\xef\x9d\x9f";  // smog/fog
-    }
-    return "\xef\x83\x9e";      // default sun
+    // degree mark
+    DrawCircleBorder(fb, width, {cx + 8, y + 9}, 8, 4, c);
+    cx += 20;
+    return cx - x;
 }
 
-[[maybe_unused]] void DrawForecastCard(uint8_t* fb,
-                                       int width,
-                                       const Rect& r,
-                                       const ForecastRenderItem& day,
-                                       bool selected,
-                                       const lv_font_t* font,
-                                       const lv_font_t* icon_font) {
-    DrawRect(fb, width, r, WHITE);
-    DrawRoundRect(fb, width, r, Style::kBorderRadiusSM, WHITE, BLACK,
-                  selected ? Style::kBorderMedium : Style::kBorderThin);
-    if (selected) {
-        DrawRect(fb, width, {r.x + r.w - 15, r.y + 7, 8, 2}, BLACK);
+// ============================================================
+// Large hero icons drawn with primitives
+// ============================================================
+
+void DrawThickLine(uint8_t* fb, int width, Point a, Point b, int thickness, Color c) {
+    for (int i = 0; i < thickness; ++i) {
+        DrawLine(fb, width, {a.x + i, a.y}, {b.x + i, b.y}, c);
+        DrawLine(fb, width, {a.x, a.y + i}, {b.x, b.y + i}, c);
     }
-
-    const int label_baseline = CalcBaselineY(font, r.y + 13, Style::kVisualTextOffset);
-    const int label_y = TopYFromBaseline(font, label_baseline);
-    DrawText(fb, width, r.x + 8, label_y, day.label.c_str(), font, BLACK);
-
-    const char* glyph = IconGlyphForCode(day.icon_code, day.weather_text);
-    const int icon_circle_r = 10;
-    const int icon_cx = r.x + r.w / 2;
-    const int icon_cy = r.y + 30;
-    DrawCircleBorder(fb, width, {icon_cx, icon_cy}, icon_circle_r, 1, BLACK);
-    int icon_w = MeasureTextWidth(glyph, icon_font);
-    DrawIcon(fb, width, icon_cx - icon_w / 2, icon_cy - 8, glyph, icon_font, BLACK);
-
-    char temp_buf[24];
-    snprintf(temp_buf, sizeof(temp_buf), "%d~%d°", static_cast<int>(day.temp_min), static_cast<int>(day.temp_max));
-    int temp_w = MeasureTextWidth(temp_buf, font);
-    const int temp_baseline = CalcBaselineY(font, r.y + r.h - 12, Style::kVisualTextOffset);
-    DrawText(fb, width, r.x + (r.w - temp_w) / 2, TopYFromBaseline(font, temp_baseline),
-             temp_buf, font, BLACK);
 }
 
-std::vector<ForecastRenderItem> BuildForecastItems(const WeatherData& data) {
-    std::vector<ForecastRenderItem> items;
-    items.reserve(4);
+void DrawSun(uint8_t* fb, int width, int cx, int cy, int r) {
+    DrawCircle(fb, width, {cx, cy}, r, YELLOW);
+    DrawCircleBorder(fb, width, {cx, cy}, r, 3, BLACK);
+    const int inner = r + 6;
+    const int outer = r + 16;
+    // cardinal rays as rects
+    DrawRect(fb, width, {cx - 2, cy - outer, 5, outer - inner}, BLACK);
+    DrawRect(fb, width, {cx - 2, cy + inner, 5, outer - inner}, BLACK);
+    DrawRect(fb, width, {cx - outer, cy - 2, outer - inner, 5}, BLACK);
+    DrawRect(fb, width, {cx + inner, cy - 2, outer - inner, 5}, BLACK);
+    // diagonal rays
+    const int di = (inner * 7) / 10;
+    const int do_ = (outer * 7) / 10;
+    DrawThickLine(fb, width, {cx - do_, cy - do_}, {cx - di, cy - di}, 3, BLACK);
+    DrawThickLine(fb, width, {cx + di, cy + di}, {cx + do_, cy + do_}, 3, BLACK);
+    DrawThickLine(fb, width, {cx + di, cy - do_ + (do_ - di)}, {cx + do_, cy - do_}, 3, BLACK);
+    DrawThickLine(fb, width, {cx - do_, cy + do_}, {cx - di, cy + di}, 3, BLACK);
+}
 
-    for (size_t i = 0; i < data.forecast.size() && items.size() < 4; ++i) {
-        const auto& src = data.forecast[i];
-        items.push_back({src.label, src.weather_text, src.icon_code, src.temp_min, src.temp_max});
+void DrawCloudShape(uint8_t* fb, int width, int cx, int cy, int scale, Color fill, Color outline) {
+    // Two lobes + a flat base; scale ~ radius of the large lobe
+    const int r1 = scale;
+    const int r2 = (scale * 3) / 4;
+    const Point big{cx + scale / 3, cy};
+    const Point small{cx - scale / 2, cy + scale / 5};
+    const Rect base{cx - scale, cy + scale / 5, scale * 2, (scale * 4) / 5};
+    DrawCircle(fb, width, big, r1, fill);
+    DrawCircle(fb, width, small, r2, fill);
+    DrawRect(fb, width, base, fill);
+    if (outline != fill) {
+        DrawCircleBorder(fb, width, big, r1, 3, outline);
+        DrawCircleBorder(fb, width, small, r2, 3, outline);
+        // repaint interior over the borders that crossed into the body
+        DrawCircle(fb, width, big, r1 - 3, fill);
+        DrawCircle(fb, width, small, r2 - 3, fill);
+        DrawRect(fb, width, {base.x + 3, base.y, base.w - 6, base.h - 3}, fill);
+        DrawHLine(fb, width, base.y + base.h - 1, base.x + 2, base.x + base.w - 2, outline);
+        DrawHLine(fb, width, base.y + base.h - 2, base.x + 2, base.x + base.w - 2, outline);
+        DrawHLine(fb, width, base.y + base.h - 3, base.x + 2, base.x + base.w - 2, outline);
+        DrawVLine(fb, width, base.x, base.y, base.y + base.h - 1, outline);
+        DrawVLine(fb, width, base.x + 1, base.y, base.y + base.h - 1, outline);
+        DrawVLine(fb, width, base.x + 2, base.y, base.y + base.h - 1, outline);
+        DrawVLine(fb, width, base.x + base.w - 1, base.y, base.y + base.h - 1, outline);
+        DrawVLine(fb, width, base.x + base.w - 2, base.y, base.y + base.h - 1, outline);
+        DrawVLine(fb, width, base.x + base.w - 3, base.y, base.y + base.h - 1, outline);
     }
+}
 
-    return items;
+void DrawRainDrops(uint8_t* fb, int width, int cx, int drop_y, Color c) {
+    for (int i = -1; i <= 1; ++i) {
+        const int x = cx + i * 24;
+        DrawThickLine(fb, width, {x, drop_y}, {x - 6, drop_y + 16}, 4, c);
+    }
+}
+
+void DrawHeroIcon(uint8_t* fb, int width, WeatherIcon icon, int cx, int cy) {
+    switch (icon) {
+        case WeatherIcon::Sunny:
+            DrawSun(fb, width, cx, cy, 26);
+            break;
+        case WeatherIcon::PartlyCloudy:
+            DrawSun(fb, width, cx - 14, cy - 14, 18);
+            DrawCloudShape(fb, width, cx + 8, cy + 10, 22, WHITE, BLACK);
+            break;
+        case WeatherIcon::Cloudy:
+        case WeatherIcon::Overcast:
+            DrawCloudShape(fb, width, cx, cy - 4, 26, WHITE, BLACK);
+            break;
+        case WeatherIcon::Rain:
+            DrawCloudShape(fb, width, cx, cy - 14, 22, BLACK, BLACK);
+            DrawRainDrops(fb, width, cx, cy + 22, RED);
+            break;
+        case WeatherIcon::Snow:
+            DrawCloudShape(fb, width, cx, cy - 14, 22, BLACK, BLACK);
+            for (int i = -1; i <= 1; ++i) {
+                DrawCircleBorder(fb, width, {cx + i * 24, cy + 28}, 5, 3, BLACK);
+            }
+            break;
+        case WeatherIcon::Fog:
+            DrawCloudShape(fb, width, cx, cy - 14, 22, WHITE, BLACK);
+            for (int i = 0; i < 3; ++i) {
+                DrawRect(fb, width, {cx - 30, cy + 18 + i * 9, 60, 4}, BLACK);
+            }
+            break;
+        case WeatherIcon::Unknown:
+        default:
+            DrawCircleBorder(fb, width, {cx, cy}, 24, 3, BLACK);
+            break;
+    }
+}
+
+// Small glyphs (weather_icons_16 font) for the tomorrow strip
+const char* SmallGlyphFor(WeatherIcon icon) {
+    switch (icon) {
+        case WeatherIcon::Sunny:        return "\xef\x83\x9e";  // sun
+        case WeatherIcon::PartlyCloudy:
+        case WeatherIcon::Cloudy:
+        case WeatherIcon::Overcast:     return "\xef\x83\x82";  // cloud
+        case WeatherIcon::Rain:         return "\xef\x83\xa9";  // rain
+        case WeatherIcon::Snow:         return "\xef\x8b\x9c";  // snow
+        case WeatherIcon::Fog:          return "\xef\x9d\x9f";  // fog
+        default:                        return "\xef\x83\x9e";
+    }
+}
+
+std::string UpperAscii(const std::string& in) {
+    std::string out = in;
+    for (auto& ch : out) ch = static_cast<char>(toupper(static_cast<unsigned char>(ch)));
+    return out;
 }
 
 }  // namespace
@@ -149,171 +240,135 @@ void WeatherRenderer::Init(int width, int height) {
 
 void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
     if (!fb) return;
-    const auto& theme = ThemeManager::Get();
-    const PaintStyle bg_style = theme.Style(ThemeToken::BackgroundPrimary);
-    const PaintStyle selected_style = theme.Style(ThemeToken::Selected);
-    const PaintStyle card_style = theme.Component(ComponentRole::CardDefault);
-    const PaintStyle panel_style = theme.Component(ComponentRole::Panel);
-    const Color text = theme.ColorFor(ThemeToken::TextPrimary);
-    const Color secondary = theme.ColorFor(ThemeToken::TextSecondary);
-    const Color border = theme.ColorFor(ThemeToken::Border);
-    const Color accent = theme.ColorFor(ThemeToken::Accent);
 
-    const int content_top = Style::kStatusBarHeight + 2;
-    DrawStyledRect(fb, width, {0, Style::kStatusBarHeight, width, height - Style::kStatusBarHeight}, bg_style);
+    // Chrome-free page: the manager draws no status bar here, we own all 300px.
+    const int content_top = 0;
+    DrawRect(fb, width, {0, 0, width, height}, WHITE);
 
     if (!has_data_) {
-        const char* empty_text = "暂无天气数据";
-        const char* hint = "长按刷新";
+        const char* empty_text = "Waiting for weather data...";
+        const char* hint = "Long-press any button to retry";
         int text_w = MeasureTextWidth(empty_text, font_);
         int hint_w = MeasureTextWidth(hint, font_);
         int center_y = content_top + (height - content_top) / 2;
-        const int empty_baseline = CalcBaselineY(font_, center_y - 10, Style::kVisualTextOffset);
-        const int hint_baseline = CalcBaselineY(font_, center_y + 16, Style::kVisualTextOffset);
-        DrawText(fb, width, (width - text_w) / 2, TopYFromBaseline(font_, empty_baseline), empty_text, font_, text);
-        DrawText(fb, width, (width - hint_w) / 2, TopYFromBaseline(font_, hint_baseline), hint, font_, secondary);
-    } else {
-        std::string location = city_name_.empty() ? current_data_.city : city_name_;
-        if (location.empty()) location = "杭州";
-        std::string location_line = FitTextToWidth(location, title_font_, 180);
+        DrawText(fb, width, (width - text_w) / 2,
+                 InkCenteredTextTopY(font_, empty_text, center_y - 16, 0), empty_text, font_, BLACK);
+        DrawText(fb, width, (width - hint_w) / 2,
+                 InkCenteredTextTopY(font_, hint, center_y + 16, 0), hint, font_, BLACK);
+        needs_full_refresh_ = false;
+        return;
+    }
 
-        // Top summary: three equal-height blocks on one visual baseline.
-        // Keep these numbers together so future weather tuning is localized.
-        constexpr int kSummaryY = Style::kStatusBarHeight + 8;
-        constexpr int kSummaryH = 68;
-        Rect location_box{24, kSummaryY, 92, kSummaryH};
-        Rect temp_box{136, kSummaryY, 112, kSummaryH};
-        Rect aqi_box{276, kSummaryY, 92, kSummaryH};
+    // ---- Header: city left, date right, heavy rule ----
+    const int header_y = content_top + 10;
+    std::string place = UpperAscii(city_name_.empty() ? current_data_.city : city_name_);
+    if (place.empty()) place = "WEATHER";
+    DrawText(fb, width, 14, InkCenteredTextTopY(title_font_, place.c_str(), header_y + 13, 0),
+             place.c_str(), title_font_, BLACK);
+    const std::string& date = current_data_.date_string;
+    if (!date.empty()) {
+        int date_w = MeasureTextWidth(date.c_str(), font_);
+        DrawText(fb, width, width - 14 - date_w,
+                 InkCenteredTextTopY(font_, date.c_str(), header_y + 13, 0),
+                 date.c_str(), font_, BLACK);
+    }
+    const int rule_y = header_y + 28;
+    DrawRect(fb, width, {0, rule_y, width, 3}, BLACK);
 
-        DrawStyledRoundRect(fb, width, height, location_box, Style::kBorderRadiusMD, selected_style);
-        const int pin_cx = location_box.x + location_box.w / 2;
-        const int pin_cy = location_box.y + 17;
-        DrawCircleBorder(fb, width, {pin_cx, pin_cy}, 5, 1, selected_style.fg);
-        DrawLine(fb, width, {pin_cx, pin_cy + 5}, {pin_cx - 4, pin_cy + 13}, selected_style.fg);
-        DrawLine(fb, width, {pin_cx, pin_cy + 5}, {pin_cx + 4, pin_cy + 13}, selected_style.fg);
-        const int loc_w = MeasureTextWidth(location_line.c_str(), title_font_);
-        DrawText(fb, width, location_box.x + (location_box.w - loc_w) / 2,
-                 InkCenteredTextTopYInBox(title_font_, location_line.c_str(), location_box.y + 30, 28, 0),
-                 location_line.c_str(), title_font_, selected_style.fg);
+    // ---- Hero: big temperature + condition left, icon right ----
+    const int hero_y = rule_y + 26;
+    const Color temp_color = (current_data_.temp_int < 0) ? RED : BLACK;
+    DrawSegTemperature(fb, width, 22, hero_y, current_data_.temp_int, temp_color);
 
-        DrawStyledRoundRect(fb, width, height, temp_box, Style::kBorderRadiusMD, card_style);
-        char temp_buf[20];
-        snprintf(temp_buf, sizeof(temp_buf), "%s°C", current_data_.temp.empty() ? "--" : current_data_.temp.c_str());
-        const int temp_w = MeasureTextWidth(temp_buf, title_font_);
-        const int temp_x = temp_box.x + (temp_box.w - temp_w) / 2;
-        const int temp_y = InkCenteredTextTopY(title_font_, temp_buf, temp_box.y + 24, 0);
-        DrawText(fb, width, temp_x, temp_y, temp_buf, title_font_, text);
-        DrawHLine(fb, width, temp_y + title_font_->line_height, temp_x, temp_x + temp_w, accent);
+    const std::string& cond = current_data_.weather_text;
+    if (!cond.empty()) {
+        DrawText(fb, width, 24, InkCenteredTextTopY(font_, cond.c_str(), hero_y + 76 + 22, 0),
+                 cond.c_str(), font_, BLACK);
+    }
 
-        char feels_buf[28];
-        snprintf(feels_buf, sizeof(feels_buf), "体感 %s°C",
-                 current_data_.feels_like.empty() ? (current_data_.temp.empty() ? "--" : current_data_.temp.c_str()) : current_data_.feels_like.c_str());
-        const int feels_w = MeasureTextWidth(feels_buf, font_);
-        DrawText(fb, width, temp_box.x + (temp_box.w - feels_w) / 2,
-                 InkCenteredTextTopY(font_, feels_buf, temp_box.y + 52, 0),
-                 feels_buf, font_, secondary);
+    WeatherIcon now_icon = ParseWeatherIcon(current_data_.weather_icon.c_str());
+    if (now_icon == WeatherIcon::Unknown) {
+        now_icon = ParseWeatherIcon(current_data_.weather_text.c_str());
+    }
+    DrawHeroIcon(fb, width, now_icon, width - 84, hero_y + 46);
 
-        DrawStyledRoundRect(fb, width, height, aqi_box, Style::kBorderRadiusMD, card_style);
-        DrawText(fb, width, aqi_box.x + 16,
-                 InkCenteredTextTopY(font_, "空气质量", aqi_box.y + 17, 0),
-                 "空气质量", font_, secondary);
-        char aqi_buf[40];
-        snprintf(aqi_buf, sizeof(aqi_buf), "%d", current_data_.air_aqi >= 0 ? static_cast<int>(current_data_.air_aqi) : 0);
-        const int aqi_w = MeasureTextWidth(aqi_buf, title_font_);
-        DrawText(fb, width, aqi_box.x + (aqi_box.w - aqi_w) / 2,
-                 InkCenteredTextTopY(title_font_, aqi_buf, aqi_box.y + 42, 0),
-                 aqi_buf, title_font_, text);
-        std::string air = current_data_.air_quality.empty() ? "优" : current_data_.air_quality;
-        const int air_w = MeasureTextWidth(air.c_str(), font_);
-        DrawText(fb, width, aqi_box.x + (aqi_box.w - air_w) / 2,
-                 InkCenteredTextTopY(font_, air.c_str(), aqi_box.y + 58, 0),
-                 air.c_str(), font_, secondary);
+    // ---- Tomorrow strip: inverted band ----
+    const WeatherForecastDay* tomorrow = nullptr;
+    for (const auto& day : current_data_.forecast) {
+        if (day.label == "Tomorrow") { tomorrow = &day; break; }
+    }
 
-        // Weather condition stack: icon above text, avoiding the old cramped
-        // horizontal icon+label composition.
-        std::string desc_line = FitTextToWidth(current_data_.weather_text.empty() ? "天气 --" : current_data_.weather_text,
-                                               font_, 80);
-        const char* desc_glyph = IconGlyphForCode(current_data_.weather_icon, current_data_.weather_text);
-        const int condition_center_x = 70;
-        const int desc_icon_w = MeasureTextWidth(desc_glyph, &weather_icons_16);
-        DrawIcon(fb, width, condition_center_x - desc_icon_w / 2,
-                 InkCenteredTextTopY(&weather_icons_16, desc_glyph, kSummaryY + kSummaryH + 16, 0),
-                 desc_glyph, &weather_icons_16, accent);
-        const int desc_w = MeasureTextWidth(desc_line.c_str(), font_);
-        DrawText(fb, width, condition_center_x - desc_w / 2,
-                 InkCenteredTextTopY(font_, desc_line.c_str(), kSummaryY + kSummaryH + 35, 0),
-                 desc_line.c_str(), font_, text);
+    const int strip_h = 52;
+    const int footer_h = 26;
+    const Rect strip{0, height - footer_h - strip_h, width, strip_h};
+    DrawRect(fb, width, strip, BLACK);
 
-        const int metrics_y = 156;
-        const char* labels[] = {"湿度", "风向", "风力", "紫外线"};
-        std::string values[] = {
-            current_data_.humidity.empty() ? "--%" : current_data_.humidity + "%",
-            current_data_.wind_dir.empty() ? "--" : current_data_.wind_dir,
-            current_data_.wind_scale.empty() ? "--级" : current_data_.wind_scale + "级",
-            "弱",
-        };
-        const int metric_x[] = {42, 128, 224, 318};
-        for (int i = 0; i < 4; ++i) {
-            DrawText(fb, width, metric_x[i],
-                     InkCenteredTextTopY(font_, labels[i], metrics_y + 8, 0),
-                     labels[i], font_, secondary);
-            DrawText(fb, width, metric_x[i],
-                     InkCenteredTextTopY(font_, values[i].c_str(), metrics_y + 32, 0),
-                     values[i].c_str(), font_, text);
-        }
+    if (tomorrow) {
+        // yellow tag
+        const char* tag = "TOMORROW";
+        int tag_w = MeasureTextWidth(tag, font_);
+        const Rect tag_box{12, strip.y + (strip_h - 28) / 2, tag_w + 12, 28};
+        DrawRect(fb, width, tag_box, YELLOW);
+        DrawText(fb, width, tag_box.x + 6,
+                 InkCenteredTextTopY(font_, tag, tag_box.y + tag_box.h / 2, 0), tag, font_, BLACK);
 
-        const std::vector<ForecastRenderItem> forecast_items = BuildForecastItems(current_data_);
-        const int forecast_count = static_cast<int>(forecast_items.size());
-        if (page_index_ >= forecast_count && forecast_count > 0) {
-            page_index_ = forecast_count - 1;
-        }
+        int x = tag_box.x + tag_box.w + 14;
+        WeatherIcon icon = ParseWeatherIcon(tomorrow->icon_code.c_str());
+        const char* glyph = SmallGlyphFor(icon);
+        const Color glyph_color = (icon == WeatherIcon::Rain) ? RED
+                                : (icon == WeatherIcon::Sunny) ? YELLOW : WHITE;
+        DrawIcon(fb, width, x, InkCenteredTextTopY(&weather_icons_16, glyph, strip.y + strip_h / 2, 0),
+                 glyph, &weather_icons_16, glyph_color);
+        x += MeasureTextWidth(glyph, &weather_icons_16) + 14;
 
-        Rect forecast_panel{28, 214, width - 56, 62};
-        DrawStyledRoundRect(fb, width, height, forecast_panel, Style::kBorderRadiusMD, panel_style);
-        const int card_w = forecast_panel.w / 4;
-        for (int i = 0; i < forecast_count && i < 4; ++i) {
-            const auto& item = forecast_items[i];
-            const int x = forecast_panel.x + i * card_w;
-            if (i > 0) {
-                for (int y = forecast_panel.y + 8; y < forecast_panel.y + forecast_panel.h - 8; y += 4) {
-                    set_pixel(fb, width, x, y, border);
-                }
+        char range[32];
+        snprintf(range, sizeof(range), "%d\xC2\xB0 / %d\xC2\xB0",
+                 (int)tomorrow->temp_max, (int)tomorrow->temp_min);
+        // draw max in white, then min part in yellow
+        char max_part[16];
+        snprintf(max_part, sizeof(max_part), "%d\xC2\xB0 ", (int)tomorrow->temp_max);
+        DrawText(fb, width, x, InkCenteredTextTopY(title_font_, range, strip.y + strip_h / 2, 0),
+                 max_part, title_font_, WHITE);
+        int max_w = MeasureTextWidth(max_part, title_font_);
+        char min_part[16];
+        snprintf(min_part, sizeof(min_part), "/ %d\xC2\xB0", (int)tomorrow->temp_min);
+        DrawText(fb, width, x + max_w,
+                 InkCenteredTextTopY(title_font_, range, strip.y + strip_h / 2, 0),
+                 min_part, title_font_, YELLOW);
+
+        const std::string& t_cond = tomorrow->weather_text;
+        if (!t_cond.empty()) {
+            int cond_w = MeasureTextWidth(t_cond.c_str(), font_);
+            if (x + max_w + MeasureTextWidth(min_part, title_font_) + 20 + cond_w < width - 12) {
+                DrawText(fb, width, width - 12 - cond_w,
+                         InkCenteredTextTopY(font_, t_cond.c_str(), strip.y + strip_h / 2, 0),
+                         t_cond.c_str(), font_, WHITE);
             }
-            DrawText(fb, width, x + 28,
-                     InkCenteredTextTopY(font_, item.label.c_str(), forecast_panel.y + 12, 0),
-                     item.label.c_str(), font_, secondary);
-            const char* glyph = IconGlyphForCode(item.icon_code, item.weather_text);
-            const int icon_center_y = forecast_panel.y + 30;
-            DrawIcon(fb, width, x + 34, InkCenteredTextTopY(&weather_icons_16, glyph, icon_center_y, 0),
-                     glyph, &weather_icons_16, accent);
-            char temp_range[24];
-            snprintf(temp_range, sizeof(temp_range), "%d/%d°C", static_cast<int>(item.temp_min), static_cast<int>(item.temp_max));
-            DrawText(fb, width, x + 20,
-                     InkCenteredTextTopY(font_, temp_range, forecast_panel.y + 48, 0),
-                     temp_range, font_, text);
         }
+    } else {
+        const char* na = "No forecast for tomorrow";
+        DrawText(fb, width, 14, InkCenteredTextTopY(font_, na, strip.y + strip_h / 2, 0),
+                 na, font_, WHITE);
+    }
+
+    // ---- Footer: attribution (MET Norway CC BY 4.0) + timestamp ----
+    const int footer_center = height - footer_h / 2;
+    const char* attribution = "Data: MET Norway";
+    DrawText(fb, width, 14, InkCenteredTextTopY(font_, attribution, footer_center, 0),
+             attribution, font_, BLACK);
+    if (!current_data_.update_time.empty()) {
+        char updated[24];
+        snprintf(updated, sizeof(updated), "Updated %s", current_data_.update_time.c_str());
+        int w = MeasureTextWidth(updated, font_);
+        DrawText(fb, width, width - 14 - w, InkCenteredTextTopY(font_, updated, footer_center, 0),
+                 updated, font_, BLACK);
     }
 
     needs_full_refresh_ = false;
 }
 
 bool WeatherRenderer::HandleInput(const ButtonEvent& event) {
-    const int max_cards = std::min<int>(4, static_cast<int>(BuildForecastItems(current_data_).size()));
     switch (event.type) {
-        case ButtonEvent::kUpClick:
-            if (max_cards > 0) {
-                page_index_ = std::max(0, page_index_ - 1);
-                needs_full_refresh_ = true;
-                return true;
-            }
-            return false;
-        case ButtonEvent::kDownClick:
-            if (max_cards > 0) {
-                page_index_ = std::min(max_cards - 1, page_index_ + 1);
-                needs_full_refresh_ = true;
-                return true;
-            }
-            return false;
         case ButtonEvent::kUpLongPress:
         case ButtonEvent::kDownLongPress:
         case ButtonEvent::kBootLongPress:
@@ -328,10 +383,6 @@ bool WeatherRenderer::HandleInput(const ButtonEvent& event) {
 void WeatherRenderer::Update(const WeatherData& data) {
     current_data_ = data;
     has_data_ = true;
-    const int max_cards = std::min<int>(4, static_cast<int>(BuildForecastItems(current_data_).size()));
-    if (page_index_ >= max_cards) {
-        page_index_ = max_cards > 0 ? max_cards - 1 : 0;
-    }
     needs_full_refresh_ = true;
 }
 

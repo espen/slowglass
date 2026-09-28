@@ -40,6 +40,7 @@ public:
     ui::RawDrawUiManager* GetRawDrawUiManager() { return rawdraw_ui_manager_.get(); }
     void UpdateStatusBarForUi();
     void OnUpClick();
+    void OnUpDoubleClick();
     void OnDownClick();
     void OnUpLongPress();
     void OnDownLongPress();
@@ -60,6 +61,7 @@ private:
     void ArmSyncSleepTimer();
     void EnterScheduledSleep();
     void EnterManualSleep();
+    bool IsOnBatteryPower();
     void NoteButtonActivity();
     void EnterWifiConfigMode();
 };

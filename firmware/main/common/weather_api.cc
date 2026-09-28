@@ -1,269 +1,188 @@
 /**
  * @file weather_api.cc
- * @brief HeWeather API client implementation
+ * @brief MET Norway (api.met.no) weather client implementation
  *
- * Uses esp_http_client for HTTP GET requests to HeWeather API.
- * JSON parsing done inline (no cJSON dependency to save flash).
+ * Data flow:
+ * 1. Geolocate once via ip-api.com (HTTP, no key). Fallback: New York City.
+ * 2. GET https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=..&lon=..
+ *    with an identifying User-Agent (MET Norway ToS) and the certificate bundle.
+ * 3. Walk properties.timeseries: entry 0 = "now"; per-entry local calendar day
+ *    (UTC time + geolocated offset) buckets today/tomorrow min/max temperatures.
  *
- * Key design:
- * - Hourly auto-refresh via esp_timer
- * - select()-based timeout (NO setsockopt(SO_RCVTIMEO))
- * - Thread-safe via static state
- *
- * API endpoints:
- *   https://devapi.qweather.com/v7/weather/now?key=XXX&location=XXX
- *   https://devapi.qweather.com/v7/weather/3d?key=XXX&location=XXX
- *   https://devapi.qweather.com/v7/air/now?key=XXX&location=XXX
+ * The compact response is ~40 KB, so the body is buffered on the heap
+ * (PSRAM-capable) instead of the old 4 KB static buffer.
  */
 
 #include "weather_api.h"
 
+#include "data_source.h"
+
 #include <esp_log.h>
 #include <esp_http_client.h>
+#include <esp_crt_bundle.h>
 #include <esp_timer.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <cJSON.h>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
+#include <cmath>
 
 static const char* kTag = "WeatherApi";
+
+// MET Norway ToS requires an identifying User-Agent with contact info.
+// Replace the URL with your own repo/contact before distributing builds.
+static const char* kUserAgent = "slowglass/0.1 (https://github.com/espen/slowglass)";
+
+// Fallback location: New York City
+static const double kFallbackLat = 40.7128;
+static const double kFallbackLon = -74.0060;
+static const char* kFallbackCity = "New York";
+static const int kFallbackUtcOffsetSec = -5 * 3600;
 
 // ============================================================
 // Static state
 // ============================================================
 
-static char s_api_key[64] = {0};
-static char s_city_code[16] = {0};
 static WeatherCallback s_callback;
 static bool s_initialized = false;
 static bool s_in_progress = false;
 static WeatherData s_last_data;
-static esp_timer_handle_t s_timer = nullptr;
+
+static bool s_have_location = false;
+static double s_lat = kFallbackLat;
+static double s_lon = kFallbackLon;
+static int s_utc_offset_sec = kFallbackUtcOffsetSec;
+static char s_city[64] = {0};
 
 // ============================================================
-// Weather icon mapping
+// Weather icon + text mapping (MET Norway symbol_code)
 // ============================================================
 
 WeatherIcon ParseWeatherIcon(const char* text) {
     if (!text || !text[0]) return WeatherIcon::Unknown;
 
-    // Sunny variants
-    if (strstr(text, "晴") != nullptr) return WeatherIcon::Sunny;
-
-    // Cloudy
-    if (strstr(text, "多云") != nullptr) return WeatherIcon::Cloudy;
-    if (strstr(text, "晴间多云") != nullptr) return WeatherIcon::Cloudy;
-
-    // Overcast
-    if (strstr(text, "阴") != nullptr) return WeatherIcon::Overcast;
-
-    // Rain (all types)
-    if (strstr(text, "雨") != nullptr) return WeatherIcon::Rain;
-
-    // Snow
-    if (strstr(text, "雪") != nullptr) return WeatherIcon::Snow;
-
-    // Fog/Haze
-    if (strstr(text, "雾") != nullptr) return WeatherIcon::Fog;
-    if (strstr(text, "霾") != nullptr) return WeatherIcon::Fog;
-    if (strstr(text, "沙尘") != nullptr) return WeatherIcon::Fog;
+    // symbol_code prefixes and their English condition texts
+    if (strstr(text, "clearsky") || strstr(text, "fair") ||
+        strstr(text, "Clear") || strstr(text, "Fair")) return WeatherIcon::Sunny;
+    if (strstr(text, "partlycloudy") || strstr(text, "Partly")) return WeatherIcon::PartlyCloudy;
+    if (strstr(text, "cloudy") || strstr(text, "Cloudy")) return WeatherIcon::Cloudy;
+    if (strstr(text, "snow") || strstr(text, "Snow")) return WeatherIcon::Snow;
+    if (strstr(text, "sleet") || strstr(text, "Sleet")) return WeatherIcon::Rain;
+    if (strstr(text, "rain") || strstr(text, "drizzle") || strstr(text, "thunder") ||
+        strstr(text, "Rain") || strstr(text, "Drizzle") || strstr(text, "Thunder")) return WeatherIcon::Rain;
+    if (strstr(text, "fog") || strstr(text, "Fog")) return WeatherIcon::Fog;
 
     return WeatherIcon::Unknown;
 }
 
-// ============================================================
-// JSON parsing (using cJSON)
-// ============================================================
+// English condition text from a symbol_code like "lightrainshowers_day"
+static std::string SymbolToEnglish(const std::string& symbol) {
+    // Strip _day / _night / _polartwilight variants
+    std::string base = symbol;
+    size_t underscore = base.find('_');
+    if (underscore != std::string::npos) base = base.substr(0, underscore);
 
-static bool ParseNowJson(const char* json, WeatherData* out) {
-    if (!json || !out) return false;
-
-    cJSON* root = cJSON_Parse(json);
-    if (!root) {
-        ESP_LOGE(kTag, "Failed to parse JSON");
-        return false;
-    }
-
-    // Check response code
-    cJSON* code_item = cJSON_GetObjectItem(root, "code");
-    if (!cJSON_IsString(code_item) || !code_item->valuestring) {
-        ESP_LOGE(kTag, "No 'code' field in response");
-        cJSON_Delete(root);
-        return false;
-    }
-    const char* code = code_item->valuestring;
-    if (strcmp(code, "200") != 0) {
-        ESP_LOGE(kTag, "API error code: %s", code);
-        cJSON_Delete(root);
-        return false;
-    }
-
-    cJSON* now = cJSON_GetObjectItem(root, "now");
-    if (!now) {
-        ESP_LOGE(kTag, "No 'now' object in response");
-        cJSON_Delete(root);
-        return false;
-    }
-
-    auto get_str = [now](const char* key) -> const char* {
-        cJSON* item = cJSON_GetObjectItem(now, key);
-        return item ? item->valuestring : nullptr;
+    struct Entry { const char* code; const char* text; };
+    static const Entry kTable[] = {
+        {"clearsky", "Clear sky"},
+        {"fair", "Fair"},
+        {"partlycloudy", "Partly cloudy"},
+        {"cloudy", "Cloudy"},
+        {"fog", "Fog"},
+        {"lightrainshowers", "Light rain showers"},
+        {"rainshowers", "Rain showers"},
+        {"heavyrainshowers", "Heavy rain showers"},
+        {"lightrain", "Light rain"},
+        {"rain", "Rain"},
+        {"heavyrain", "Heavy rain"},
+        {"lightsleet", "Light sleet"},
+        {"sleet", "Sleet"},
+        {"heavysleet", "Heavy sleet"},
+        {"lightsnowshowers", "Light snow showers"},
+        {"snowshowers", "Snow showers"},
+        {"lightsnow", "Light snow"},
+        {"snow", "Snow"},
+        {"heavysnow", "Heavy snow"},
     };
-
-    // Parse temperature
-    const char* tmp = get_str("temp");
-    if (tmp) {
-        out->temp = tmp;
-        out->temp_int = atoi(tmp);
+    for (const auto& e : kTable) {
+        if (base == e.code) return e.text;
     }
-
-    // Feels like
-    const char* feels = get_str("feelsLike");
-    if (feels) out->feels_like = feels;
-
-    // Weather text + icon
-    const char* icon = get_str("icon");
-    if (icon) out->weather_icon = icon;
-
-    const char* weather = get_str("text");
-    if (weather) out->weather_text = weather;
-
-    // Wind
-    const char* wind_dir = get_str("windDir");
-    if (wind_dir) out->wind_dir = wind_dir;
-
-    const char* wind_scale = get_str("windScale");
-    if (wind_scale) out->wind_scale = wind_scale;
-
-    // Humidity
-    const char* humidity = get_str("humidity");
-    if (humidity) out->humidity = humidity;
-
-    // Update time
-    const char* update = get_str("obsTime");
-    if (update) {
-        // Extract HH:MM from "2024-01-15T14:30+08:00"
-        out->update_time = update;
-        const char* t_pos = strchr(update, 'T');
-        if (t_pos && t_pos[1] && t_pos[2] && t_pos[3] == ':') {
-            out->update_time = std::string(t_pos + 1, 5);
-        }
+    if (base.find("thunder") != std::string::npos) return "Thunderstorm";
+    if (!base.empty()) {
+        base[0] = static_cast<char>(toupper(base[0]));
+        return base;
     }
-
-    cJSON_Delete(root);
-    return true;
-}
-
-static bool ParseForecastJson(const char* json, WeatherData* out) {
-    if (!json || !out) return false;
-
-    cJSON* root = cJSON_Parse(json);
-    if (!root) {
-        ESP_LOGE(kTag, "Failed to parse forecast JSON");
-        return false;
-    }
-
-    cJSON* code_item = cJSON_GetObjectItem(root, "code");
-    const char* code = cJSON_IsString(code_item) ? code_item->valuestring : nullptr;
-    if (!code || strcmp(code, "200") != 0) {
-        ESP_LOGE(kTag, "Forecast API error code: %s", code ? code : "null");
-        cJSON_Delete(root);
-        return false;
-    }
-
-    cJSON* daily = cJSON_GetObjectItem(root, "daily");
-    if (!cJSON_IsArray(daily)) {
-        ESP_LOGE(kTag, "No 'daily' array in forecast response");
-        cJSON_Delete(root);
-        return false;
-    }
-
-    out->forecast.clear();
-    const char* labels[3] = {"今天", "明天", "后天"};
-    int index = 0;
-    cJSON* day = nullptr;
-    cJSON_ArrayForEach(day, daily) {
-        if (index >= 3) break;
-        WeatherForecastDay item;
-        item.label = labels[index];
-
-        cJSON* text_day = cJSON_GetObjectItem(day, "textDay");
-        if (cJSON_IsString(text_day) && text_day->valuestring) {
-            item.weather_text = text_day->valuestring;
-        }
-        cJSON* icon_day = cJSON_GetObjectItem(day, "iconDay");
-        if (cJSON_IsString(icon_day) && icon_day->valuestring) {
-            item.icon_code = icon_day->valuestring;
-        }
-        cJSON* temp_min = cJSON_GetObjectItem(day, "tempMin");
-        if (cJSON_IsString(temp_min) && temp_min->valuestring) {
-            item.temp_min = atoi(temp_min->valuestring);
-        } else if (cJSON_IsNumber(temp_min)) {
-            item.temp_min = temp_min->valueint;
-        }
-        cJSON* temp_max = cJSON_GetObjectItem(day, "tempMax");
-        if (cJSON_IsString(temp_max) && temp_max->valuestring) {
-            item.temp_max = atoi(temp_max->valuestring);
-        } else if (cJSON_IsNumber(temp_max)) {
-            item.temp_max = temp_max->valueint;
-        }
-        out->forecast.push_back(item);
-        ++index;
-    }
-
-    cJSON_Delete(root);
-    return !out->forecast.empty();
-}
-
-static bool ParseAirJson(const char* json, WeatherData* out) {
-    if (!json || !out) return false;
-
-    cJSON* root = cJSON_Parse(json);
-    if (!root) {
-        ESP_LOGE(kTag, "Failed to parse air JSON");
-        return false;
-    }
-
-    cJSON* code_item = cJSON_GetObjectItem(root, "code");
-    const char* code = cJSON_IsString(code_item) ? code_item->valuestring : nullptr;
-    if (!code || strcmp(code, "200") != 0) {
-        ESP_LOGW(kTag, "Air API error code: %s", code ? code : "null");
-        cJSON_Delete(root);
-        return false;
-    }
-
-    cJSON* now = cJSON_GetObjectItem(root, "now");
-    if (!cJSON_IsObject(now)) {
-        cJSON_Delete(root);
-        return false;
-    }
-
-    cJSON* category = cJSON_GetObjectItem(now, "category");
-    if (cJSON_IsString(category) && category->valuestring) {
-        out->air_quality = category->valuestring;
-    }
-
-    cJSON* aqi = cJSON_GetObjectItem(now, "aqi");
-    if (cJSON_IsString(aqi) && aqi->valuestring) {
-        out->air_aqi = atoi(aqi->valuestring);
-    } else if (cJSON_IsNumber(aqi)) {
-        out->air_aqi = aqi->valueint;
-    }
-
-    cJSON_Delete(root);
-    return true;
+    return "Unknown";
 }
 
 // ============================================================
-// HTTP client
+// Time helpers
 // ============================================================
 
-static char s_response_buf[4096] = {0};
-static int s_response_len = 0;
+// Parse "2026-09-27T18:00:00Z" to a Unix epoch (UTC). Returns 0 on failure.
+static int64_t ParseIso8601Utc(const char* s) {
+    int y, mo, d, h, mi, sec;
+    if (!s || sscanf(s, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec) != 6) return 0;
+    // Days-from-civil algorithm (Howard Hinnant), valid for our date range
+    int64_t yy = y;
+    yy -= mo <= 2;
+    int64_t era = (yy >= 0 ? yy : yy - 399) / 400;
+    int64_t yoe = yy - era * 400;
+    int64_t doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    int64_t days = era * 146097 + doe - 719468;
+    return days * 86400 + h * 3600 + mi * 60 + sec;
+}
+
+static void FormatLocal(int64_t epoch_utc, int offset_sec, char* hhmm, size_t hhmm_len,
+                        char* date_str, size_t date_len) {
+    int64_t local = epoch_utc + offset_sec;
+    int64_t days = local / 86400;
+    int64_t rem = local % 86400;
+    if (rem < 0) { rem += 86400; days -= 1; }
+    if (hhmm) snprintf(hhmm, hhmm_len, "%02d:%02d", (int)(rem / 3600), (int)((rem % 3600) / 60));
+    if (date_str) {
+        // civil-from-days (Howard Hinnant)
+        int64_t z = days + 719468;
+        int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+        int64_t doe = z - era * 146097;
+        int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        int64_t yy = yoe + era * 400;
+        int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        int64_t mp = (5 * doy + 2) / 153;
+        int64_t d = doy - (153 * mp + 2) / 5 + 1;
+        int64_t m = mp + (mp < 10 ? 3 : -9);
+        yy += (m <= 2);
+        static const char* kMonths[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                        "Jul","Aug","Sep","Oct","Nov","Dec"};
+        static const char* kWeekdays[] = {"Thu","Fri","Sat","Sun","Mon","Tue","Wed"};
+        int wd = (int)(((days % 7) + 7) % 7);  // day 0 (1970-01-01) was a Thursday
+        snprintf(date_str, date_len, "%s %d %s", kWeekdays[wd], (int)d, kMonths[(m - 1) % 12]);
+    }
+}
+
+static int64_t LocalDayIndex(int64_t epoch_utc, int offset_sec) {
+    int64_t local = epoch_utc + offset_sec;
+    int64_t days = local / 86400;
+    if (local % 86400 < 0) days -= 1;
+    return days;
+}
+
+// ============================================================
+// HTTP client (heap-buffered; the met.no compact response is ~40 KB)
+// ============================================================
+
+static const size_t kResponseCapacity = 96 * 1024;
+static char* s_response_buf = nullptr;
+static size_t s_response_len = 0;
 
 static esp_err_t HttpEventHandler(esp_http_client_event_t* evt) {
     switch (evt->event_id) {
         case HTTP_EVENT_ON_DATA:
-            if (s_response_len + evt->data_len < sizeof(s_response_buf)) {
+            if (s_response_buf && s_response_len + evt->data_len < kResponseCapacity) {
                 memcpy(s_response_buf + s_response_len, evt->data, evt->data_len);
                 s_response_len += evt->data_len;
             }
@@ -274,22 +193,37 @@ static esp_err_t HttpEventHandler(esp_http_client_event_t* evt) {
     return ESP_OK;
 }
 
-static bool HttpGet(const char* url) {
+static bool HttpGet(const char* url, bool https) {
+    if (!s_response_buf) {
+        s_response_buf = static_cast<char*>(
+            heap_caps_malloc(kResponseCapacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (!s_response_buf) {
+            s_response_buf = static_cast<char*>(malloc(kResponseCapacity));
+        }
+        if (!s_response_buf) {
+            ESP_LOGE(kTag, "Failed to allocate response buffer");
+            return false;
+        }
+    }
     s_response_len = 0;
-    memset(s_response_buf, 0, sizeof(s_response_buf));
 
     esp_http_client_config_t config = {};
     config.url = url;
     config.method = HTTP_METHOD_GET;
     config.event_handler = HttpEventHandler;
-    config.timeout_ms = 10000;
+    config.timeout_ms = 15000;
     config.disable_auto_redirect = false;
+    config.user_agent = kUserAgent;
+    if (https) {
+        config.crt_bundle_attach = esp_crt_bundle_attach;
+    }
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
         ESP_LOGE(kTag, "Failed to init HTTP client");
         return false;
     }
+    esp_http_client_set_header(client, "Accept", "application/json");
 
     esp_err_t err = esp_http_client_perform(client);
     if (err != ESP_OK) {
@@ -299,7 +233,7 @@ static bool HttpGet(const char* url) {
     }
 
     int status = esp_http_client_get_status_code(client);
-    if (status != 200) {
+    if (status != 200 && status != 203) {
         ESP_LOGE(kTag, "HTTP status: %d for %s", status, url);
         esp_http_client_cleanup(client);
         return false;
@@ -310,129 +244,241 @@ static bool HttpGet(const char* url) {
     return true;
 }
 
-static void DoFetch(void* arg) {
-    (void)arg;
-    if (!s_initialized || s_in_progress) return;
+// ============================================================
+// Geolocation (ip-api.com; free endpoint is HTTP-only)
+// ============================================================
 
-    if (!s_api_key[0] || !s_city_code[0]) {
-        ESP_LOGE(kTag, "API key or city code not set");
+static void Geolocate() {
+    if (s_have_location) return;
+
+    // Defaults in case anything below fails
+    s_lat = kFallbackLat;
+    s_lon = kFallbackLon;
+    s_utc_offset_sec = kFallbackUtcOffsetSec;
+    strncpy(s_city, kFallbackCity, sizeof(s_city) - 1);
+
+    if (!HttpGet("http://ip-api.com/json/?fields=status,city,lat,lon,offset", false)) {
+        ESP_LOGW(kTag, "IP geolocation request failed; using fallback %s", s_city);
+        s_have_location = true;  // don't retry every fetch
         return;
     }
 
-    s_in_progress = true;
-    WeatherData data;
+    cJSON* root = cJSON_Parse(s_response_buf);
+    if (!root) {
+        ESP_LOGW(kTag, "IP geolocation parse failed; using fallback %s", s_city);
+        s_have_location = true;
+        return;
+    }
 
-    char url[256];
+    cJSON* status = cJSON_GetObjectItem(root, "status");
+    cJSON* lat = cJSON_GetObjectItem(root, "lat");
+    cJSON* lon = cJSON_GetObjectItem(root, "lon");
+    cJSON* offset = cJSON_GetObjectItem(root, "offset");
+    cJSON* city = cJSON_GetObjectItem(root, "city");
+
+    if (cJSON_IsString(status) && strcmp(status->valuestring, "success") == 0 &&
+        cJSON_IsNumber(lat) && cJSON_IsNumber(lon)) {
+        s_lat = lat->valuedouble;
+        s_lon = lon->valuedouble;
+        if (cJSON_IsNumber(offset)) s_utc_offset_sec = offset->valueint;
+        if (cJSON_IsString(city) && city->valuestring[0]) {
+            strncpy(s_city, city->valuestring, sizeof(s_city) - 1);
+            s_city[sizeof(s_city) - 1] = '\0';
+        }
+        ESP_LOGI(kTag, "Geolocated: %s (%.4f, %.4f) UTC%+d", s_city, s_lat, s_lon,
+                 s_utc_offset_sec / 3600);
+    } else {
+        ESP_LOGW(kTag, "IP geolocation unsuccessful; using fallback %s", s_city);
+    }
+
+    cJSON_Delete(root);
+    s_have_location = true;
+}
+
+// ============================================================
+// MET Norway locationforecast parsing
+// ============================================================
+
+static bool ParseForecast(const char* json, WeatherData* out) {
+    cJSON* root = cJSON_Parse(json);
+    if (!root) {
+        ESP_LOGE(kTag, "Failed to parse forecast JSON");
+        return false;
+    }
+
+    cJSON* props = cJSON_GetObjectItem(root, "properties");
+    cJSON* series = props ? cJSON_GetObjectItem(props, "timeseries") : nullptr;
+    if (!cJSON_IsArray(series) || cJSON_GetArraySize(series) == 0) {
+        ESP_LOGE(kTag, "No timeseries in response");
+        cJSON_Delete(root);
+        return false;
+    }
+
+    auto instant_detail = [](cJSON* entry, const char* key, double* value) -> bool {
+        cJSON* data = cJSON_GetObjectItem(entry, "data");
+        cJSON* instant = data ? cJSON_GetObjectItem(data, "instant") : nullptr;
+        cJSON* details = instant ? cJSON_GetObjectItem(instant, "details") : nullptr;
+        cJSON* item = details ? cJSON_GetObjectItem(details, key) : nullptr;
+        if (cJSON_IsNumber(item)) { *value = item->valuedouble; return true; }
+        return false;
+    };
+
+    auto symbol_code = [](cJSON* entry) -> const char* {
+        cJSON* data = cJSON_GetObjectItem(entry, "data");
+        if (!data) return nullptr;
+        for (const char* period : {"next_1_hours", "next_6_hours", "next_12_hours"}) {
+            cJSON* block = cJSON_GetObjectItem(data, period);
+            cJSON* summary = block ? cJSON_GetObjectItem(block, "summary") : nullptr;
+            cJSON* code = summary ? cJSON_GetObjectItem(summary, "symbol_code") : nullptr;
+            if (cJSON_IsString(code) && code->valuestring[0]) return code->valuestring;
+        }
+        return nullptr;
+    };
+
+    // --- Current conditions from the first entry ---
+    cJSON* now_entry = cJSON_GetArrayItem(series, 0);
+    cJSON* now_time = cJSON_GetObjectItem(now_entry, "time");
+    int64_t now_epoch = ParseIso8601Utc(cJSON_IsString(now_time) ? now_time->valuestring : nullptr);
+    int64_t today = LocalDayIndex(now_epoch, s_utc_offset_sec);
+
+    double temp_now = 0, humidity = 0, wind_speed = 0, wind_dir_deg = -1;
+    if (!instant_detail(now_entry, "air_temperature", &temp_now)) {
+        ESP_LOGE(kTag, "No current temperature in response");
+        cJSON_Delete(root);
+        return false;
+    }
+    instant_detail(now_entry, "relative_humidity", &humidity);
+    instant_detail(now_entry, "wind_speed", &wind_speed);
+    instant_detail(now_entry, "wind_from_direction", &wind_dir_deg);
+
+    out->city = s_city;
+    out->temp_int = (int32_t)lround(temp_now);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", (int)out->temp_int);
+    out->temp = buf;
+    snprintf(buf, sizeof(buf), "%d", (int)lround(humidity));
+    out->humidity = buf;
+    snprintf(buf, sizeof(buf), "%.1f", wind_speed);
+    out->wind_scale = buf;
+    if (wind_dir_deg >= 0) {
+        static const char* kDirs[] = {"N","NE","E","SE","S","SW","W","NW"};
+        out->wind_dir = kDirs[((int)lround(wind_dir_deg / 45.0)) % 8];
+    }
+
+    const char* now_symbol = symbol_code(now_entry);
+    out->weather_icon = now_symbol ? now_symbol : "";
+    out->weather_text = SymbolToEnglish(out->weather_icon);
+
+    char hhmm[8], date_str[20];
+    FormatLocal(now_epoch, s_utc_offset_sec, hhmm, sizeof(hhmm), date_str, sizeof(date_str));
+    out->update_time = hhmm;
+    out->date_string = date_str;
+
+    // --- Today / tomorrow min-max from the whole series ---
+    struct DayAgg {
+        double min = 1000, max = -1000;
+        std::string midday_symbol;
+        int64_t best_midday_dist = 1 << 30;
+        bool any = false;
+    } days[2];
+
+    cJSON* entry = nullptr;
+    cJSON_ArrayForEach(entry, series) {
+        cJSON* t = cJSON_GetObjectItem(entry, "time");
+        int64_t epoch = ParseIso8601Utc(cJSON_IsString(t) ? t->valuestring : nullptr);
+        if (epoch == 0) continue;
+        int64_t day = LocalDayIndex(epoch, s_utc_offset_sec);
+        if (day != today && day != today + 1) continue;
+        DayAgg& agg = days[day - today];
+
+        double temp;
+        if (instant_detail(entry, "air_temperature", &temp)) {
+            if (temp < agg.min) agg.min = temp;
+            if (temp > agg.max) agg.max = temp;
+            agg.any = true;
+        }
+        // Prefer the symbol closest to 12:00 local as the day's representative
+        int64_t local_sec = ((epoch + s_utc_offset_sec) % 86400 + 86400) % 86400;
+        int64_t dist = std::abs((long long)(local_sec - 12 * 3600));
+        const char* sym = symbol_code(entry);
+        if (sym && dist < agg.best_midday_dist) {
+            agg.best_midday_dist = dist;
+            agg.midday_symbol = sym;
+        }
+    }
+
+    out->forecast.clear();
+    const char* labels[2] = {"Today", "Tomorrow"};
+    for (int i = 0; i < 2; i++) {
+        if (!days[i].any) continue;
+        WeatherForecastDay item;
+        item.label = labels[i];
+        item.icon_code = days[i].midday_symbol;
+        item.weather_text = SymbolToEnglish(days[i].midday_symbol);
+        item.temp_min = (int32_t)lround(days[i].min);
+        item.temp_max = (int32_t)lround(days[i].max);
+        out->forecast.push_back(item);
+    }
+
+    cJSON_Delete(root);
+    return true;
+}
+
+// ============================================================
+// Fetch orchestration
+// ============================================================
+
+static void DoFetch(void* arg) {
+    (void)arg;
+    if (!s_initialized || s_in_progress) return;
+    s_in_progress = true;
+
+    Geolocate();
+
+    char url[160];
     snprintf(url, sizeof(url),
-             "https://devapi.qweather.com/v7/weather/now?key=%s&location=%s",
-             s_api_key, s_city_code);
-    ESP_LOGI(kTag, "Fetching current weather: %s", url);
-    if (!HttpGet(url) || !ParseNowJson(s_response_buf, &data)) {
-        ESP_LOGE(kTag, "Failed to fetch or parse current weather");
+             "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=%.4f&lon=%.4f",
+             s_lat, s_lon);
+    ESP_LOGI(kTag, "Fetching forecast: %s", url);
+
+    WeatherData data;
+    if (!HttpGet(url, true) || !ParseForecast(s_response_buf, &data)) {
+        ESP_LOGE(kTag, "Failed to fetch or parse forecast");
         s_in_progress = false;
         return;
     }
 
-    snprintf(url, sizeof(url),
-             "https://devapi.qweather.com/v7/weather/3d?key=%s&location=%s",
-             s_api_key, s_city_code);
-    ESP_LOGI(kTag, "Fetching forecast: %s", url);
-    if (!HttpGet(url) || !ParseForecastJson(s_response_buf, &data)) {
-        ESP_LOGW(kTag, "Failed to fetch or parse 3-day forecast");
-    }
-
-    snprintf(url, sizeof(url),
-             "https://devapi.qweather.com/v7/air/now?key=%s&location=%s",
-             s_api_key, s_city_code);
-    ESP_LOGI(kTag, "Fetching air quality: %s", url);
-    if (!HttpGet(url) || !ParseAirJson(s_response_buf, &data)) {
-        ESP_LOGW(kTag, "Failed to fetch or parse air quality");
-    }
-
     s_last_data = data;
-    ESP_LOGI(kTag, "Weather: %s %s°C AQI=%d forecast=%d",
-             data.weather_text.c_str(),
-             data.temp.c_str(),
-             data.air_aqi,
-             static_cast<int>(data.forecast.size()));
+    ESP_LOGI(kTag, "Weather: %s %s°C in %s, forecast days=%d",
+             data.weather_text.c_str(), data.temp.c_str(), data.city.c_str(),
+             (int)data.forecast.size());
 
     if (s_callback) {
         s_callback(data);
     }
-
     s_in_progress = false;
-}
-
-// ============================================================
-// Timer callback
-// ============================================================
-
-static void TimerCallback(void* arg) {
-    ESP_LOGD(kTag, "Hourly weather refresh triggered");
-    DoFetch(arg);
 }
 
 // ============================================================
 // Public API
 // ============================================================
 
-void weather_api_init(const char* api_key, const char* city_code, WeatherCallback callback) {
+void weather_api_init(WeatherCallback callback) {
     if (s_initialized) {
         ESP_LOGW(kTag, "Already initialized");
         return;
     }
-
-    strncpy(s_api_key, api_key, sizeof(s_api_key) - 1);
-    strncpy(s_city_code, city_code, sizeof(s_city_code) - 1);
     s_callback = callback;
-
-    // Create hourly refresh timer
-    esp_timer_create_args_t timer_args = {
-        .callback = TimerCallback,
-        .arg = nullptr,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "weather_refresh",
-        .skip_unhandled_events = true,
-    };
-
-    if (esp_timer_create(&timer_args, &s_timer) == ESP_OK) {
-        // Start with 1 hour interval (3600 * 1,000,000 microseconds)
-        esp_timer_start_periodic(s_timer, 3600LL * 1000000LL);
-        ESP_LOGI(kTag, "Timer started (1h interval)");
-    } else {
-        ESP_LOGE(kTag, "Failed to create timer");
-    }
-
     s_initialized = true;
 
-    // Fetch immediately on init
-    DoFetch(nullptr);
-
-    ESP_LOGI(kTag, "Weather API initialized: city=%s", s_city_code);
+    // Scheduling (task spawning, periodic timer, NVS interval override under
+    // "datasrc"/"weather") is owned by the data-source registry.
+    data_source_register({"weather", 60, []() { DoFetch(nullptr); }});
 }
 
 bool weather_api_fetch_now() {
     if (!s_initialized) return false;
-    if (s_in_progress) return false;
-
-    DoFetch(nullptr);
-    return true;
-}
-
-void weather_api_set_city(const char* city_code) {
-    strncpy(s_city_code, city_code, sizeof(s_city_code) - 1);
-    ESP_LOGI(kTag, "City changed to: %s", s_city_code);
-
-    // Fetch new data for new city
-    weather_api_fetch_now();
-}
-
-void weather_api_set_key(const char* api_key) {
-    strncpy(s_api_key, api_key, sizeof(s_api_key) - 1);
-}
-
-const char* weather_api_get_city() {
-    return s_city_code;
+    return data_source_fetch_now("weather");
 }
 
 bool weather_api_is_ready() {
@@ -441,4 +487,8 @@ bool weather_api_is_ready() {
 
 const WeatherData* weather_api_get_last_data() {
     return &s_last_data;
+}
+
+const char* weather_api_get_city() {
+    return s_city;
 }

@@ -3,7 +3,10 @@
 #include "boards/zectrix-s3-epaper-4.2/custom_lcd_display.h"
 #include "boards/zectrix-s3-epaper-4.2/config.h"
 #include "board.h"
+#include "common/data_source.h"
 #include "common/photo_storage.h"
+#include "common/weather_api.h"
+#include "ui/page_config.h"
 #include "display.h"
 #include "settings.h"
 #include "ui/rawdraw_ui_manager.h"
@@ -25,20 +28,24 @@ constexpr char kSyncNamespace[] = "sync";
 constexpr char kSyncIntervalKey[] = "sync_interval";
 constexpr char kGalleryNamespace[] = "gallery";
 constexpr char kSlideshowIntervalKey[] = "slide_min";
+// Battery duty cycle: short awake window per wake, then deep sleep with an
+// hourly timer wake so the weather stays current off USB.
+constexpr int kBatteryAwakeWindowMinutes = 4;
+constexpr int64_t kBatterySleepIntervalMinutes = 60;
 constexpr int kSettingsSlideshowIndex = 3;
 constexpr int kSettingsWifiIndex = 5;
 constexpr int kSettingsHttpServerIndex = 6;
 constexpr int kSettingsLanIpIndex = 7;
 
 std::string FormatMinutesLabel(int minutes) {
-    if (minutes <= 0) return "关闭";
+    if (minutes <= 0) return "Off";
     char buf[16];
     snprintf(buf, sizeof(buf), "%dmin", minutes);
     return buf;
 }
 
 const char* FormatMinutesLogLabel(int minutes) {
-    return minutes <= 0 ? "关闭" : "开启";
+    return minutes <= 0 ? "Off" : "On";
 }
 
 int NextSlideshowInterval(int current) {
@@ -55,7 +62,7 @@ void UpdateWifiSettingsItem(rawdraw::SettingsRenderer* renderer, bool connected,
                             const char* value = nullptr) {
     if (!renderer) return;
     renderer->UpdateChecked(kSettingsWifiIndex, connected);
-    renderer->UpdateItem(kSettingsWifiIndex, value ? value : (connected ? "已连接" : "未连接"));
+    renderer->UpdateItem(kSettingsWifiIndex, value ? value : (connected ? "Connected" : "Not connected"));
 }
 
 void UpdateHttpServerSettingsItem(rawdraw::SettingsRenderer* renderer, bool running,
@@ -67,7 +74,7 @@ void UpdateHttpServerSettingsItem(rawdraw::SettingsRenderer* renderer, bool runn
     } else if (!ip_address.empty()) {
         value = ip_address;
     } else {
-        value = running ? "已开启" : "已关闭";
+        value = running ? "On" : "Off";
     }
     renderer->UpdateChecked(kSettingsHttpServerIndex, running);
     renderer->UpdateItem(kSettingsHttpServerIndex, value);
@@ -75,7 +82,7 @@ void UpdateHttpServerSettingsItem(rawdraw::SettingsRenderer* renderer, bool runn
 
 void UpdateLanIpSettingsItem(rawdraw::SettingsRenderer* renderer, const std::string& ip_address) {
     if (!renderer) return;
-    renderer->UpdateItem(kSettingsLanIpIndex, ip_address.empty() ? "未获取" : ip_address);
+    renderer->UpdateItem(kSettingsLanIpIndex, ip_address.empty() ? "None" : ip_address);
 }
 
 void StartSntpClockSyncOnce() {
@@ -168,11 +175,11 @@ void Application::Initialize() {
         rawdraw_ui_manager_->SetGallerySlideshowIntervalMinutes(slideshow_interval);
 
         std::vector<rawdraw::SettingsItemDef> items;
-        items.push_back({"系统", "", nullptr, rawdraw::SettingsItemType::Section, false});
-        items.push_back({"重启", "执行", nullptr, rawdraw::SettingsItemType::Action, false,
+        items.push_back({"System", "", nullptr, rawdraw::SettingsItemType::Section, false});
+        items.push_back({"Restart", "Run", nullptr, rawdraw::SettingsItemType::Action, false,
                          []() { esp_restart(); }});
-        items.push_back({"相册", "", nullptr, rawdraw::SettingsItemType::Section, false});
-        items.push_back({"轮播间隔", FormatMinutesLabel(slideshow_interval), nullptr,
+        items.push_back({"Gallery", "", nullptr, rawdraw::SettingsItemType::Section, false});
+        items.push_back({"Slideshow", FormatMinutesLabel(slideshow_interval), nullptr,
                          rawdraw::SettingsItemType::Action, false,
                          [this, sr]() {
                              Settings nvs(kGalleryNamespace, true);
@@ -192,8 +199,8 @@ void Application::Initialize() {
                              }
                              sr->UpdateItem(kSettingsSlideshowIndex, FormatMinutesLabel(next));
                          }});
-        items.push_back({"网络", "", nullptr, rawdraw::SettingsItemType::Section, false});
-        items.push_back({"Wi-Fi", "未连接", nullptr, rawdraw::SettingsItemType::Checkbox, false,
+        items.push_back({"Network", "", nullptr, rawdraw::SettingsItemType::Section, false});
+        items.push_back({"Wi-Fi", "Not connected", nullptr, rawdraw::SettingsItemType::Checkbox, false,
                          [this, sr]() {
                              auto& wifi = WifiManager::GetInstance();
                              if (wifi_connected_.load(std::memory_order_acquire) || wifi.IsConnected()) {
@@ -208,12 +215,12 @@ void Application::Initialize() {
                                  UpdateLanIpSettingsItem(sr, "");
                              } else {
                                  ESP_LOGI(kTag, "Wi-Fi setting toggled ON");
-                                 UpdateWifiSettingsItem(sr, false, "连接中");
+                                 UpdateWifiSettingsItem(sr, false, "Connecting");
                                  wifi.StartStation();
                              }
                              UpdateStatusBarForUi();
                          }});
-        items.push_back({"局域网服务", "已关闭", nullptr, rawdraw::SettingsItemType::Checkbox, false,
+        items.push_back({"LAN Server", "Off", nullptr, rawdraw::SettingsItemType::Checkbox, false,
                          [this, sr]() {
                              if (!rawdraw_ui_manager_) return;
                              if (rawdraw_ui_manager_->IsLanHttpServerRunning()) {
@@ -231,14 +238,14 @@ void Application::Initialize() {
                              auto& wifi = WifiManager::GetInstance();
                              if (!wifi_connected_.load(std::memory_order_acquire) && !wifi.IsConnected()) {
                                  ESP_LOGW(kTag, "LAN HTTP server requires WiFi connection");
-                                 UpdateHttpServerSettingsItem(sr, false, "需先连接WiFi");
+                                 UpdateHttpServerSettingsItem(sr, false, "Needs WiFi first");
                                  UpdateStatusBarForUi();
                                  return;
                              }
                              const std::string ip = wifi.GetIpAddress();
                              if (ip.empty()) {
                                  ESP_LOGW(kTag, "LAN HTTP server requires station IP");
-                                 UpdateHttpServerSettingsItem(sr, false, "等待IP");
+                                 UpdateHttpServerSettingsItem(sr, false, "Waiting for IP");
                                  UpdateStatusBarForUi();
                                  return;
                              }
@@ -253,15 +260,15 @@ void Application::Initialize() {
                              UpdateLanIpSettingsItem(sr, started ? ip : WifiManager::GetInstance().GetIpAddress());
                              UpdateStatusBarForUi();
                          }});
-        items.push_back({"局域网IP", "未获取", nullptr, rawdraw::SettingsItemType::Normal, false});
-        items.push_back({"省电模式", "手动进入", nullptr,
+        items.push_back({"LAN IP", "None", nullptr, rawdraw::SettingsItemType::Normal, false});
+        items.push_back({"Power Saving", "Sleep now", nullptr,
                          rawdraw::SettingsItemType::Action, false,
                          [this]() {
                              ESP_LOGI(kTag, "Manual sleep requested from settings");
                              EnterManualSleep();
                          }});
-        items.push_back({"关于", "", nullptr, rawdraw::SettingsItemType::Section, false});
-        items.push_back({"固件", PROJECT_VER, nullptr, rawdraw::SettingsItemType::Normal, false});
+        items.push_back({"About", "", nullptr, rawdraw::SettingsItemType::Section, false});
+        items.push_back({"Firmware", PROJECT_VER, nullptr, rawdraw::SettingsItemType::Normal, false});
         sr->SetItems(items);
         sr->SetFirmwareVersion("v" PROJECT_VER);
 
@@ -282,6 +289,12 @@ void Application::Initialize() {
             rawdraw_ui_manager_->RequestActivePageRefresh();
         }
     }
+    // Failsafe on battery: arm the sleep timer at boot so a wake with broken
+    // WiFi still goes back to sleep instead of draining the battery. A later
+    // WiFi connect re-arms the window from that moment.
+    if (IsOnBatteryPower()) {
+        ArmSyncSleepTimer();
+    }
 
     // Set up WiFi status callback to update StatusBar
     board.SetNetworkEventCallback([this](NetworkEvent event, const std::string& data) {
@@ -290,7 +303,10 @@ void Application::Initialize() {
                 ESP_LOGI(kTag, "WiFi connected: %s", data.c_str());
                 wifi_connected_.store(true, std::memory_order_release);
                 StartSntpClockSyncOnce();
-                if (rawdraw_ui_manager_ && !rawdraw_ui_manager_->IsLanHttpServerRunning()) {
+                // The LAN web server pins the device awake, so it only runs on
+                // USB power; on battery the device duty-cycles instead.
+                if (rawdraw_ui_manager_ && !rawdraw_ui_manager_->IsLanHttpServerRunning() &&
+                    !IsOnBatteryPower()) {
                     const std::string ip = data.empty() ? WifiManager::GetInstance().GetIpAddress() : data;
                     if (!ip.empty()) {
                         const bool started = rawdraw_ui_manager_->StartLanHttpServer(ip);
@@ -305,9 +321,25 @@ void Application::Initialize() {
                 if (rawdraw_ui_manager_ &&
                     rawdraw_ui_manager_->GetCurrentPage() == ui::RawDrawPageId::APTransfer &&
                     !rawdraw_ui_manager_->IsApTransferModeRunning()) {
-                    ESP_LOGI(kTag, "WiFi connected while config page is visible, returning to gallery");
-                    rawdraw_ui_manager_->SwitchPage(ui::RawDrawPageId::Gallery);
+                    ESP_LOGI(kTag, "WiFi connected while config page is visible, returning to home page");
+                    rawdraw_ui_manager_->SwitchPage(ui::pageconfig::HomePage());
                 }
+                // Register data sources once, then start/refresh them all now
+                // that we have connectivity (data_sources_start is idempotent
+                // and re-fetches on reconnect).
+                if (!weather_api_is_ready()) {
+                    weather_api_init([this](const WeatherData& weather) {
+                        if (!rawdraw_ui_manager_) return;
+                        if (auto* wr = rawdraw_ui_manager_->GetWeatherRenderer()) {
+                            wr->SetCityName(weather.city.c_str());
+                            wr->Update(weather);
+                        }
+                        if (rawdraw_ui_manager_->GetCurrentPage() == ui::RawDrawPageId::Weather) {
+                            rawdraw_ui_manager_->RequestFullRefresh();
+                        }
+                    });
+                }
+                data_sources_start();
                 UpdateStatusBarForUi();
                 ArmSyncSleepTimer();
                 break;
@@ -368,6 +400,15 @@ void Application::OnUpClick() {
     Board::GetInstance().FlashActivityLed();
     if (rawdraw_ui_manager_) {
         rawdraw_ui_manager_->HandleInput(rawdraw::ButtonEvent{rawdraw::ButtonEvent::kUpClick});
+    }
+}
+
+void Application::OnUpDoubleClick() {
+    ESP_LOGI(kTag, "UP double click");
+    Board::GetInstance().FlashActivityLed();
+    NoteButtonActivity();
+    if (rawdraw_ui_manager_) {
+        rawdraw_ui_manager_->HandleInput(rawdraw::ButtonEvent{rawdraw::ButtonEvent::kUpDoubleClick});
     }
 }
 
@@ -451,28 +492,48 @@ void Application::EnterWifiConfigMode() {
     UpdateStatusBarForUi();
 }
 
+bool Application::IsOnBatteryPower() {
+    int level = 0;
+    bool charging = false;
+    bool discharging = false;
+    Board::GetInstance().GetBatteryLevel(level, charging, discharging);
+    return discharging;
+}
+
 void Application::ArmSyncSleepTimer() {
-    if (IsLocalHttpServiceRunning(rawdraw_ui_manager_.get())) {
-        if (sleep_timer_ != nullptr) {
-            esp_timer_stop(sleep_timer_);
+    const bool on_battery = IsOnBatteryPower();
+
+    // On battery the dashboard duty-cycles: a short awake window per wake,
+    // then deep sleep with an hourly timer wake. USB keeps the original
+    // always-on semantics, so the blockers below only apply there.
+    if (!on_battery) {
+        if (IsLocalHttpServiceRunning(rawdraw_ui_manager_.get())) {
+            if (sleep_timer_ != nullptr) {
+                esp_timer_stop(sleep_timer_);
+            }
+            ESP_LOGI(kTag, "Sync sleep timer skipped while local HTTP transfer service is running");
+            return;
         }
-        ESP_LOGI(kTag, "Sync sleep timer skipped while local HTTP transfer service is running");
-        return;
-    }
-    if (rawdraw_ui_manager_ &&
-        rawdraw_ui_manager_->GetGallerySlideshowIntervalMinutes() > 0) {
-        if (sleep_timer_ != nullptr) {
-            esp_timer_stop(sleep_timer_);
+        if (rawdraw_ui_manager_ &&
+            rawdraw_ui_manager_->GetGallerySlideshowIntervalMinutes() > 0) {
+            if (sleep_timer_ != nullptr) {
+                esp_timer_stop(sleep_timer_);
+            }
+            ESP_LOGI(kTag, "Sync sleep timer skipped while gallery slideshow is enabled");
+            return;
         }
-        ESP_LOGI(kTag, "Sync sleep timer skipped while gallery slideshow is enabled");
-        return;
     }
 
-    Settings nvs(kSyncNamespace, false);
-    const int interval_minutes = nvs.GetInt(kSyncIntervalKey, 30);
-    if (interval_minutes <= 0) {
-        ESP_LOGI(kTag, "Sync sleep interval: 关闭");
-        return;
+    int interval_minutes;
+    if (on_battery) {
+        interval_minutes = kBatteryAwakeWindowMinutes;
+    } else {
+        Settings nvs(kSyncNamespace, false);
+        interval_minutes = nvs.GetInt(kSyncIntervalKey, 30);
+        if (interval_minutes <= 0) {
+            ESP_LOGI(kTag, "Sync sleep interval: disabled");
+            return;
+        }
     }
     if (sleep_timer_ == nullptr) {
         esp_timer_create_args_t args = {};
@@ -486,25 +547,48 @@ void Application::ArmSyncSleepTimer() {
     }
     esp_timer_stop(sleep_timer_);
     const int64_t delay_us = static_cast<int64_t>(interval_minutes) * 60 * 1000 * 1000;
-    ESP_LOGI(kTag, "Sync sleep interval: %d minutes", interval_minutes);
-    ESP_LOGI(kTag, "Scheduling sleep after sync interval: %d minutes", interval_minutes);
+    ESP_LOGI(kTag, "Scheduling sleep in %d minutes (%s power)", interval_minutes,
+             on_battery ? "battery" : "USB");
     ESP_ERROR_CHECK(esp_timer_start_once(sleep_timer_, delay_us));
 }
 
 void Application::EnterScheduledSleep() {
-    if (IsLocalHttpServiceRunning(rawdraw_ui_manager_.get())) {
-        ESP_LOGI(kTag, "Scheduled sleep skipped: local HTTP transfer service is running");
-        ArmSyncSleepTimer();
-        return;
-    }
-    if (rawdraw_ui_manager_ &&
-        rawdraw_ui_manager_->GetGallerySlideshowIntervalMinutes() > 0) {
-        ESP_LOGI(kTag, "Scheduled sleep skipped: gallery slideshow is enabled");
-        ArmSyncSleepTimer();
+    const bool on_battery = IsOnBatteryPower();
+
+    // Never sleep mid e-paper refresh — retry shortly after the panel idles.
+    if (rawdraw_ui_manager_ && rawdraw_ui_manager_->IsDisplayRefreshPending()) {
+        ESP_LOGI(kTag, "Scheduled sleep deferred: display refresh in progress");
+        if (sleep_timer_ != nullptr) {
+            esp_timer_start_once(sleep_timer_, 15LL * 1000 * 1000);
+        }
         return;
     }
 
-    ESP_LOGI(kTag, "Entering deep sleep after sync interval; BOOT wakes device");
+    if (!on_battery) {
+        if (IsLocalHttpServiceRunning(rawdraw_ui_manager_.get())) {
+            ESP_LOGI(kTag, "Scheduled sleep skipped: local HTTP transfer service is running");
+            ArmSyncSleepTimer();
+            return;
+        }
+        if (rawdraw_ui_manager_ &&
+            rawdraw_ui_manager_->GetGallerySlideshowIntervalMinutes() > 0) {
+            ESP_LOGI(kTag, "Scheduled sleep skipped: gallery slideshow is enabled");
+            ArmSyncSleepTimer();
+            return;
+        }
+    }
+
+    if (on_battery) {
+        // Self-wake at the fastest cadence any enabled data source wants, so
+        // e.g. a 10-min transit source shortens the sleep automatically.
+        const int wake_minutes =
+            data_sources_min_interval_minutes((int)kBatterySleepIntervalMinutes);
+        esp_sleep_enable_timer_wakeup(wake_minutes * 60LL * 1000 * 1000);
+        ESP_LOGI(kTag, "Entering deep sleep; timer wake in %d min, BOOT wakes sooner",
+                 wake_minutes);
+    } else {
+        ESP_LOGI(kTag, "Entering deep sleep after sync interval; BOOT wakes device");
+    }
     wifi_connected_.store(false, std::memory_order_release);
     esp_wifi_disconnect();
     esp_wifi_stop();

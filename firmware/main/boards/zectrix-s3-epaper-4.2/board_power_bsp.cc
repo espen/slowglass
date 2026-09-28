@@ -33,36 +33,18 @@ void BoardPowerBsp::PowerLedTask(void *arg) {
             continue;
         }
 
-        ChargeStatus::Snapshot snap{};
-        const bool has_status = self && self->charge_status_;
-        if (has_status) {
+        // LED indications disabled for the weather dashboard build: no charge
+        // or activity signalling — the LED stays dark outside factory test
+        // mode (SetFactoryLedOverride above still works). Charge state is
+        // still ticked so battery telemetry stays accurate.
+        if (self && self->charge_status_) {
             self->charge_status_->Tick(esp_timer_get_time() / 1000);
-            snap = self->charge_status_->Get();
         }
+        self->led_activity_pulses_.store(0, std::memory_order_relaxed);
         gpio_hold_dis((gpio_num_t)GPIO_NUM_3);
-        if ((!has_status || (!snap.charging && !snap.full)) &&
-            self->led_activity_pulses_.load(std::memory_order_relaxed) > 0) {
-            self->led_activity_pulses_.fetch_sub(1, std::memory_order_relaxed);
-            gpio_set_level(GPIO_NUM_3, 0);
-            vTaskDelay(pdMS_TO_TICKS(120));
-            gpio_set_level(GPIO_NUM_3, 1);
-            gpio_hold_en((gpio_num_t)GPIO_NUM_3);
-            vTaskDelay(pdMS_TO_TICKS(180));
-        } else if (has_status && snap.full) {
-            gpio_set_level(GPIO_NUM_3, 0);
-            gpio_hold_en((gpio_num_t)GPIO_NUM_3);
-            vTaskDelay(pdMS_TO_TICKS(500));
-        } else if (has_status && snap.charging) {
-            gpio_set_level(GPIO_NUM_3, 0);
-            vTaskDelay(pdMS_TO_TICKS(200));
-            gpio_set_level(GPIO_NUM_3, 1);
-            gpio_hold_en((gpio_num_t)GPIO_NUM_3);
-            vTaskDelay(pdMS_TO_TICKS(2800));
-        } else {
-            gpio_set_level(GPIO_NUM_3, 1);
-            gpio_hold_en((gpio_num_t)GPIO_NUM_3);
-            vTaskDelay(pdMS_TO_TICKS(500));
-        }
+        gpio_set_level(GPIO_NUM_3, 1);
+        gpio_hold_en((gpio_num_t)GPIO_NUM_3);
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
