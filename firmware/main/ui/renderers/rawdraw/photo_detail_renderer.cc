@@ -101,12 +101,12 @@ void PhotoDetailRenderer::Render(uint8_t* fb, int width, int height) {
 
     if (photos_.empty() || !current_photo_data_ || current_photo_size_ == 0) {
         Modal modal;
-        modal.SetTitle("暂无照片");
-        modal.SetBodyFooter("等待推送");
+        modal.SetTitle("No photos");
+        modal.SetBodyFooter("Waiting for upload");
         modal.CenterInScreen(width, height, 52);
         modal.Draw(fb, width, height);
     } else {
-        // 图片详情页去掉底栏，最大化展示区域
+        // 图片详情页去掉底栏，最大化Show区域
         const int frame_x = 8;
         const int frame_y = Style::kStatusBarHeight + 4;
         const int frame_w = width - 16;
@@ -141,8 +141,8 @@ void PhotoDetailRenderer::Render(uint8_t* fb, int width, int height) {
         DrawMetadataModal(fb, width, height);
     }
 
-    // 图片详情页无底栏，最大化展示
-    // 操作提示：UP/DN翻页，BOOT查看信息（可通过 statusBar 或 modal 提示）
+    // 图片详情页无底栏，最大化Show
+    // 操作提示：UP/DN browse，BOOT查看信息（可通过 statusBar 或 modal 提示）
 
     needs_full_refresh_ = false;
 }
@@ -246,8 +246,8 @@ void PhotoDetailRenderer::DrawMetadataModal(uint8_t* fb, int width, int height) 
     const Color text = theme.ColorFor(ThemeToken::TextPrimary);
     const Color secondary = theme.ColorFor(ThemeToken::TextSecondary);
     Modal modal;
-    modal.SetTitle("照片信息");
-    modal.SetBodyFooter("BOOT关闭");
+    modal.SetTitle("Photo Info");
+    modal.SetBodyFooter("BOOT close");
     modal.CenterInScreen(width, height, 40);
     modal.Draw(fb, width, height);
 
