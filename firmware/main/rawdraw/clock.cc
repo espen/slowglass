@@ -50,9 +50,11 @@ std::string Clock::GetDateString(const char* date_format) {
         snprintf(buf, sizeof(buf), "%04u-%02u-%02u", y, m, d);
         return buf;
     }
-    // Default: Chinese format "M月D日" (no leading zeros for single-digit month/day)
+    // Default: "Sep 28"
+    static const char* kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     std::string s;
-    s += std::to_string(tm.tm_mon + 1) + "月" + std::to_string(tm.tm_mday) + "日";
+    s += std::string(kMonths[tm.tm_mon]) + " " + std::to_string(tm.tm_mday);
     return s;
 }
 

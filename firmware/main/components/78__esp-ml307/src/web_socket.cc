@@ -238,7 +238,7 @@ bool WebSocket::Connect(const char* uri) {
         }
     });
 
-    // 发送 WebSocket 握手请求
+    // Send WebSocket 握手请求
     std::string request = "GET " + path + " HTTP/1.1\r\n";
     if (headers_.find("Host") == headers_.end()) {
         request += "Host: " + host + "\r\n";
@@ -333,7 +333,7 @@ bool WebSocket::Send(const void* data, size_t len, bool binary, bool fin) {
     // 更新continuation_状态
     continuation_ = !fin;
 
-    // 发送帧
+    // Send帧
     std::lock_guard<std::mutex> lock(send_mutex_);
     if (!tcp_) {
         return false;
@@ -527,7 +527,7 @@ void WebSocket::OnTcpData(const std::string& data) {
 
 bool WebSocket::SendControlFrame(uint8_t opcode, const void* data, size_t len) {
     if (len > 125) {
-        ESP_LOGE(TAG, "控制帧有效载荷过大");
+        ESP_LOGE(TAG, "Control frame payload too large");
         return false;
     }
 
@@ -553,7 +553,7 @@ bool WebSocket::SendControlFrame(uint8_t opcode, const void* data, size_t len) {
         frame.push_back(static_cast<char>(payload[i] ^ mask[i % 4]));
     }
 
-    // 发送帧
+    // Send帧
     std::lock_guard<std::mutex> lock(send_mutex_);
     if (!tcp_) {
         return false;

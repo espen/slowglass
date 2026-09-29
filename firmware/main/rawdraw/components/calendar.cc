@@ -32,38 +32,38 @@ struct SolarTermEntry {
 // Approximate solar term dates (fixed-day approximation)
 // In reality these shift by ±1 day depending on the year
 static const SolarTermEntry kSolarTerms[] = {
-    { 1,  5, "小寒" }, { 1, 20, "大寒" },
-    { 2,  4, "立春" }, { 2, 19, "雨水" },
-    { 3,  5, "惊蛰" }, { 3, 20, "春分" },
-    { 4,  4, "清明" }, { 4, 20, "谷雨" },
-    { 5,  5, "立夏" }, { 5, 21, "小满" },
-    { 6,  5, "芒种" }, { 6, 21, "夏至" },
-    { 7,  7, "小暑" }, { 7, 23, "大暑" },
-    { 8,  7, "立秋" }, { 8, 23, "处暑" },
-    { 9,  7, "白露" }, { 9, 23, "秋分" },
-    {10,  8, "寒露" }, {10, 23, "霜降" },
-    {11,  7, "立冬" }, {11, 22, "小雪" },
-    {12,  7, "大雪" }, {12, 22, "冬至" },
+    { 1,  5, "Xiaohan" }, { 1, 20, "Dahan" },
+    { 2,  4, "Lichun" }, { 2, 19, "Yushui" },
+    { 3,  5, "Jingzhe" }, { 3, 20, "Chunfen" },
+    { 4,  4, "Qingming" }, { 4, 20, "Guyu" },
+    { 5,  5, "Lixia" }, { 5, 21, "Xiaoman" },
+    { 6,  5, "Mangzhong" }, { 6, 21, "Xiazhi" },
+    { 7,  7, "Xiaoshu" }, { 7, 23, "Dashu" },
+    { 8,  7, "Liqiu" }, { 8, 23, "Chushu" },
+    { 9,  7, "Bailu" }, { 9, 23, "Qiufen" },
+    {10,  8, "Hanlu" }, {10, 23, "Shuangjiang" },
+    {11,  7, "Lidong" }, {11, 22, "Xiaoxue" },
+    {12,  7, "Daxue" }, {12, 22, "Dongzhi" },
 };
 
 static constexpr int kSolarTermCount = sizeof(kSolarTerms) / sizeof(kSolarTerms[0]);
 
 // Lunar month names (lunar calendar months 1-12)
 static const char* kLunarMonths[] = {
-    "正月", "二月", "三月", "四月", "五月", "六月",
-    "七月", "八月", "九月", "十月", "十一月", "腊月"
+    "Month 1", "Month 2", "Month 3", "Month 4", "Month 5", "Month 6",
+    "Month 7", "Month 8", "Month 9", "Month 10", "Month 11", "Month 12"
 };
 
 // Lunar day names
 static const char* kLunarDays[] = {
-    "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
-    "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
-    "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"
+    "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10",
+    "D11", "D12", "D13", "D14", "D15", "D16", "D17", "D18", "D19", "D20",
+    "D21", "D22", "D23", "D24", "D25", "D26", "D27", "D28", "D29", "D30"
 };
 
 // Weekday header characters
-static const char* kWeekdayChars[] = {"日", "一", "二", "三", "四", "五", "六"};
-static const char* kWeekdayFull[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+static const char* kWeekdayChars[] = {"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"};
+static const char* kWeekdayFull[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
 // Holidays (fixed-date solar holidays in Gregorian calendar)
 struct HolidayEntry {
@@ -73,20 +73,20 @@ struct HolidayEntry {
 };
 
 static const HolidayEntry kHolidays[] = {
-    { 1,  1, "元旦" },
-    { 2, 14, "情人节" },
-    { 3,  8, "妇女节" },
-    { 3, 12, "植树节" },
-    { 4,  1, "愚人节" },
-    { 5,  1, "劳动节" },
-    { 5,  4, "青年节" },
-    { 6,  1, "儿童节" },
-    { 7,  1, "建党节" },
-    { 8,  1, "建军节" },
-    { 9, 10, "教师节" },
-    {10,  1, "国庆节" },
-    {10, 31, "万圣节" },
-    {12, 25, "圣诞节" },
+    { 1,  1, "New Year" },
+    { 2, 14, "Valentine" },
+    { 3,  8, "Women's Day" },
+    { 3, 12, "Arbor Day" },
+    { 4,  1, "April Fools" },
+    { 5,  1, "Labor Day" },
+    { 5,  4, "Youth Day" },
+    { 6,  1, "Kids' Day" },
+    { 7,  1, "CPC Day" },
+    { 8,  1, "Army Day" },
+    { 9, 10, "Teachers' Day" },
+    {10,  1, "National Day" },
+    {10, 31, "Halloween" },
+    {12, 25, "Christmas" },
 };
 
 static constexpr int kHolidayCount = sizeof(kHolidays) / sizeof(kHolidays[0]);
@@ -168,8 +168,8 @@ static constexpr int kLunarMaxYear = 2050;
 static constexpr int kLunarYearCount = kLunarMaxYear - kLunarMinYear + 1;  // 51
 
 // Tian Gan (天干) and Di Zhi (地支) for year names
-static const char* kTianGan[] = {"甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"};
-static const char* kDiZhi[] = {"子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"};
+static const char* kTianGan[] = {"Jia", "Yi", "Bing", "Ding", "Wu", "Ji", "Geng", "Xin", "Ren", "Gui"};
+static const char* kDiZhi[] = {"Zi", "Chou", "Yin", "Mao", "Chen", "Si", "Wu", "Wei", "Shen", "You", "Xu", "Hai"};
 
 // Leap month info for 2000-2050 (0 = no leap, 1-12 = which month has leap)
 // Derived from lunardate library validation
@@ -582,9 +582,9 @@ void Calendar::DrawHeader(uint8_t* fb, int width) const {
     DrawHLine(fb, width, line_y, x_, x_ + w_ - 1, border);
     DrawHLine(fb, width, line_y + 1, x_, x_ + w_ - 1, border);
 
-    // Title: "2026年 4月" centered
+    // Title: "2026年 Apr" centered
     char title[32];
-    snprintf(title, sizeof(title), "%d年 %d月", year_, month_);
+    snprintf(title, sizeof(title), "%d-%02d", year_, month_);
     int title_w = MeasureTextWidth(title, title_font_);
     int title_x = x_ + (w_ - title_w) / 2;
     int title_text_y = y_ + (title_bar_h - title_font_->line_height) / 2;
@@ -696,7 +696,7 @@ void Calendar::DrawGrid(uint8_t* fb, int width, int y) const {
             int q_year = year_, q_month = month_, q_day = display_day;
             if (holiday_fetcher::IsHoliday(q_year, q_month, q_day)) {
                 holiday = holiday_fetcher::GetHolidayName(q_year, q_month, q_day);
-                if (!holiday) holiday = "休";
+                if (!holiday) holiday = "H";
             } else if (holiday_fetcher::IsMakeupWorkday(q_year, q_month, q_day)) {
                 makeup_label = holiday_fetcher::GetMakeupLabel(q_year, q_month, q_day);
             }
@@ -780,18 +780,18 @@ void Calendar::DrawBottomInfo(uint8_t* fb, int width, int y) const {
     char buf[80];
     if (year_ == today_year_ && month_ == today_month_) {
         int weekday_idx = WeekdayOfDate(today_year_, today_month_, today_day_);
-        snprintf(buf, sizeof(buf), "今天 %d月%d日 %s",
+        snprintf(buf, sizeof(buf), "Today %d/%d %s",
                  today_month_, today_day_, kWeekdayFull[weekday_idx]);
 
         // Add lunar date
         LunarDate ld = ToLunarDate(today_year_, today_month_, today_day_);
         const char* year_name = GetLunarYearName(today_year_);
         int extra_len = snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
-                                 " %s年%s%s", year_name, GetLunarMonthName(ld.lunar_month), GetLunarDayName(ld.lunar_day));
+                                 " · %s %s %s", year_name, GetLunarMonthName(ld.lunar_month), GetLunarDayName(ld.lunar_day));
         (void)extra_len;
     } else {
         int dim = DaysInMonth(year_, month_);
-        snprintf(buf, sizeof(buf), "%d年%d月 共%d天", year_, month_, dim);
+        snprintf(buf, sizeof(buf), "%d-%02d · %d days", year_, month_, dim);
     }
 
     int text_w = MeasureTextWidth(buf, small_font_);

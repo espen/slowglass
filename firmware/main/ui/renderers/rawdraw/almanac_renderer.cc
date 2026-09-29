@@ -23,17 +23,17 @@ extern const lv_font_t SourceHanSansSC_Medium_slim;
 extern const lv_font_t weather_icons_48;
 
 // Weekday characters (matches calendar.cc)
-static const char* kWeekdayFull[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+static const char* kWeekdayFull[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
 // Lunar month/day names (same as calendar.cc)
 static const char* kLunarMonths[] = {
-    "正月", "二月", "三月", "四月", "五月", "六月",
-    "七月", "八月", "九月", "十月", "十一月", "腊月"
+    "Month 1", "Month 2", "Month 3", "Month 4", "Month 5", "Month 6",
+    "Month 7", "Month 8", "Month 9", "Month 10", "Month 11", "Month 12"
 };
 static const char* kLunarDays[] = {
-    "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
-    "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
-    "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"
+    "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10",
+    "D11", "D12", "D13", "D14", "D15", "D16", "D17", "D18", "D19", "D20",
+    "D21", "D22", "D23", "D24", "D25", "D26", "D27", "D28", "D29", "D30"
 };
 
 // Tian Gan / Di Zhi (used via Calendar::GetLunarYearName)
@@ -47,18 +47,18 @@ struct SolarTermEntry {
     const char* name;
 };
 static const SolarTermEntry kSolarTerms[] = {
-    { 1,  5, "小寒" }, { 1, 20, "大寒" },
-    { 2,  4, "立春" }, { 2, 19, "雨水" },
-    { 3,  5, "惊蛰" }, { 3, 20, "春分" },
-    { 4,  4, "清明" }, { 4, 20, "谷雨" },
-    { 5,  5, "立夏" }, { 5, 21, "小满" },
-    { 6,  5, "芒种" }, { 6, 21, "夏至" },
-    { 7,  7, "小暑" }, { 7, 23, "大暑" },
-    { 8,  7, "立秋" }, { 8, 23, "处暑" },
-    { 9,  7, "白露" }, { 9, 23, "秋分" },
-    {10,  8, "寒露" }, {10, 23, "霜降" },
-    {11,  7, "立冬" }, {11, 22, "小雪" },
-    {12,  7, "大雪" }, {12, 22, "冬至" },
+    { 1,  5, "Xiaohan" }, { 1, 20, "Dahan" },
+    { 2,  4, "Lichun" }, { 2, 19, "Yushui" },
+    { 3,  5, "Jingzhe" }, { 3, 20, "Chunfen" },
+    { 4,  4, "Qingming" }, { 4, 20, "Guyu" },
+    { 5,  5, "Lixia" }, { 5, 21, "Xiaoman" },
+    { 6,  5, "Mangzhong" }, { 6, 21, "Xiazhi" },
+    { 7,  7, "Xiaoshu" }, { 7, 23, "Dashu" },
+    { 8,  7, "Liqiu" }, { 8, 23, "Chushu" },
+    { 9,  7, "Bailu" }, { 9, 23, "Qiufen" },
+    {10,  8, "Hanlu" }, {10, 23, "Shuangjiang" },
+    {11,  7, "Lidong" }, {11, 22, "Xiaoxue" },
+    {12,  7, "Daxue" }, {12, 22, "Dongzhi" },
 };
 
 static const char* GetSolarTerm(int month, int day) {
@@ -70,31 +70,31 @@ static const char* GetSolarTerm(int month, int day) {
     return nullptr;
 }
 
-// Simplified yiji (宜忌) based on lunar day patterns
+// Simplified yiji (DoAvoid) based on lunar day patterns
 // This is a traditional approximation, not a full almanac calculation
 static const char* kYiTable[][4] = {
-    {"祭祀", "祈福", "出行", "动土"},
-    {"嫁娶", "纳采", "订盟", "出行"},
-    {"开市", "交易", "立券", "纳财"},
-    {"破土", "启钻", "安葬", "修坟"},
-    {"修造", "动土", "起基", "定磉"},
-    {"安床", "开市", "交易", "立券"},
-    {"祭祀", "沐浴", "扫舍", "修造"},
-    {"祈福", "求嗣", "出行", "解除"},
-    {"嫁娶", "祭祀", "祈福", "出行"},
-    {"开市", "立券", "交易", "纳财"},
+    {"Rituals", "Blessings", "Travel", "Groundwork"},
+    {"Weddings", "Proposals", "Engagement", "Travel"},
+    {"Opening", "Trading", "Contracts", "Wealth"},
+    {"Digging", "Exhumation", "Burial", "Tomb work"},
+    {"Building", "Groundwork", "Foundation", "Cornerstone"},
+    {"Bed setup", "Opening", "Trading", "Contracts"},
+    {"Rituals", "Bathing", "Cleaning", "Building"},
+    {"Blessings", "Fertility", "Travel", "Cleansing"},
+    {"Weddings", "Rituals", "Blessings", "Travel"},
+    {"Opening", "Contracts", "Trading", "Wealth"},
 };
 static const char* kJiTable[][3] = {
-    {"破土", "安葬", "启钻"},
-    {"开仓", "出货财", "纳粟"},
-    {"词讼", "争执", "诽谤"},
-    {"嫁娶", "出行", "祈福"},
-    {"安床", "移徙", "入宅"},
-    {"祭祀", "修造", "动土"},
-    {"开市", "纳财", "交易"},
-    {"出行", "解除", "拆卸"},
-    {"破土", "启钻", "安葬"},
-    {"纳采", "订盟", "嫁娶"},
+    {"Digging", "Burial", "Exhumation"},
+    {"Storehouse", "Shipping", "Harvest"},
+    {"Lawsuits", "Disputes", "Gossip"},
+    {"Weddings", "Travel", "Blessings"},
+    {"Bed setup", "Moving", "Housewarming"},
+    {"Rituals", "Building", "Groundwork"},
+    {"Opening", "Wealth", "Trading"},
+    {"Travel", "Cleansing", "Demolition"},
+    {"Digging", "Exhumation", "Burial"},
+    {"Proposals", "Engagement", "Weddings"},
 };
 
 namespace rawdraw {
@@ -130,7 +130,7 @@ void AlmanacRenderer::RefreshData() {
     // Solar term
     solar_term_ = GetSolarTerm(month_, day_);
 
-    // Yiji (宜忌) - simplified based on lunar day
+    // Yiji (DoAvoid) - simplified based on lunar day
     int yi_idx = (lunar_.lunar_day - 1) % 10;
     int ji_idx = (lunar_.lunar_day) % 10;
     yi_ = kYiTable[yi_idx];
@@ -153,14 +153,14 @@ void AlmanacRenderer::Render(uint8_t* fb, int width, int height) {
     DrawTitleBar(fb, width);
 
     // === Large lunar year name + date ===
-    // e.g. "丙午年 三月初八"
+    // e.g. "丙午年 Month 3D8"
     char lunar_full[32];
     if (lunar_.lunar_month > 0 && lunar_.lunar_day > 0) {
-        snprintf(lunar_full, sizeof(lunar_full), "%s年 %s%s",
+        snprintf(lunar_full, sizeof(lunar_full), "%s · %s %s",
                  lunar_year_name_, GetLunarMonthName(lunar_.lunar_month),
                  GetLunarDayName(lunar_.lunar_day));
     } else {
-        snprintf(lunar_full, sizeof(lunar_full), "%s年", lunar_year_name_);
+        snprintf(lunar_full, sizeof(lunar_full), "%s", lunar_year_name_);
     }
 
     // Draw centered
@@ -171,7 +171,7 @@ void AlmanacRenderer::Render(uint8_t* fb, int width, int height) {
 
     // === Gregorian date ===
     char greg_buf[64];
-    snprintf(greg_buf, sizeof(greg_buf), "公历 %d年%d月%d日 %s",
+    snprintf(greg_buf, sizeof(greg_buf), "Solar %d/%d/%d %s",
              year_, month_, day_, kWeekdayFull[weekday_]);
     int greg_w = MeasureTextWidth(greg_buf, font_);
     int greg_x = (width - greg_w) / 2;
@@ -192,9 +192,9 @@ void AlmanacRenderer::Render(uint8_t* fb, int width, int height) {
     DrawHLine(fb, width, y, Style::kSpacingLG, width - Style::kSpacingLG, border);
     y += Style::kSpacingSM;
 
-    // === 宜 (auspicious) section ===
-    DrawText(fb, width, Style::kSpacingLG, y, "宜", title_font_, accent);
-    int yi_label_w = MeasureTextWidth("宜", title_font_);
+    // === Do (auspicious) section ===
+    DrawText(fb, width, Style::kSpacingLG, y, "Do", title_font_, accent);
+    int yi_label_w = MeasureTextWidth("Do", title_font_);
     int yi_start = Style::kSpacingLG + yi_label_w + Style::kSpacingSM;
     int yi_y = y;
     for (int i = 0; i < 4; i++) {
@@ -204,9 +204,9 @@ void AlmanacRenderer::Render(uint8_t* fb, int width, int height) {
     }
     y += font_->line_height + Style::kSpacingMD;
 
-    // === 忌 (inauspicious) section ===
-    DrawText(fb, width, Style::kSpacingLG, y, "忌", title_font_, danger);
-    int ji_label_w = MeasureTextWidth("忌", title_font_);
+    // === Avoid (inauspicious) section ===
+    DrawText(fb, width, Style::kSpacingLG, y, "Avoid", title_font_, danger);
+    int ji_label_w = MeasureTextWidth("Avoid", title_font_);
     int ji_start = Style::kSpacingLG + ji_label_w + Style::kSpacingSM;
     int ji_y = y;
     for (int i = 0; i < 3; i++) {
@@ -240,8 +240,8 @@ void AlmanacRenderer::DrawTitleBar(uint8_t* fb, int width) {
 
     // FIX: 改用 InkCenteredTextTopYInBox，避免 line_height 居中导致中文偏上
     // 参见 wiki/projects/notellm-baseline-alignment.md
-    int title_text_y = InkCenteredTextTopYInBox(font_, "老黄历", title_y_start, title_bar_h, 1);
-    DrawText(fb, width, Style::kSpacingLG, title_text_y, "老黄历", font_, text);
+    int title_text_y = InkCenteredTextTopYInBox(font_, "Almanac", title_y_start, title_bar_h, 1);
+    DrawText(fb, width, Style::kSpacingLG, title_text_y, "Almanac", font_, text);
 }
 
 const char* AlmanacRenderer::GetLunarMonthName(int month) {
