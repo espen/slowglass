@@ -162,13 +162,29 @@ void DrawRainDrops(uint8_t* fb, int width, int cx, int drop_y, Color c) {
     }
 }
 
+void DrawMoon(uint8_t* fb, int width, int cx, int cy, int r) {
+    // Full moon with craters: no rays (vs. sun), reads cleanly at small sizes.
+    DrawCircle(fb, width, {cx, cy}, r, YELLOW);
+    DrawCircleBorder(fb, width, {cx, cy}, r, 3, BLACK);
+    DrawCircleBorder(fb, width, {cx - r / 3, cy - r / 4}, r / 5, 2, BLACK);
+    DrawCircleBorder(fb, width, {cx + r / 4, cy + r / 8}, r / 6, 2, BLACK);
+    DrawCircleBorder(fb, width, {cx - r / 8, cy + r / 2 - 3}, r / 7, 2, BLACK);
+}
+
 void DrawHeroIcon(uint8_t* fb, int width, WeatherIcon icon, int cx, int cy) {
     switch (icon) {
         case WeatherIcon::Sunny:
             DrawSun(fb, width, cx, cy, 26);
             break;
+        case WeatherIcon::ClearNight:
+            DrawMoon(fb, width, cx, cy, 32);
+            break;
         case WeatherIcon::PartlyCloudy:
             DrawSun(fb, width, cx - 14, cy - 14, 18);
+            DrawCloudShape(fb, width, cx + 8, cy + 10, 22, WHITE, BLACK);
+            break;
+        case WeatherIcon::PartlyCloudyNight:
+            DrawMoon(fb, width, cx - 14, cy - 14, 22);
             DrawCloudShape(fb, width, cx + 8, cy + 10, 22, WHITE, BLACK);
             break;
         case WeatherIcon::Cloudy:
@@ -201,7 +217,9 @@ void DrawHeroIcon(uint8_t* fb, int width, WeatherIcon icon, int cx, int cy) {
 // Small glyphs (weather_icons_16 font) for the tomorrow strip
 const char* SmallGlyphFor(WeatherIcon icon) {
     switch (icon) {
-        case WeatherIcon::Sunny:        return "\xef\x83\x9e";  // sun
+        case WeatherIcon::Sunny:
+        case WeatherIcon::ClearNight:   return "\xef\x83\x9e";  // sun
+        case WeatherIcon::PartlyCloudyNight:
         case WeatherIcon::PartlyCloudy:
         case WeatherIcon::Cloudy:
         case WeatherIcon::Overcast:     return "\xef\x83\x82";  // cloud

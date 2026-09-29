@@ -64,10 +64,15 @@ static char s_city[64] = {0};
 WeatherIcon ParseWeatherIcon(const char* text) {
     if (!text || !text[0]) return WeatherIcon::Unknown;
 
-    // symbol_code prefixes and their English condition texts
+    // symbol_code prefixes and their English condition texts. MET symbol
+    // codes carry a _day/_night suffix; only clear/partly-cloudy conditions
+    // render differently at night.
+    const bool night = strstr(text, "_night") != nullptr;
     if (strstr(text, "clearsky") || strstr(text, "fair") ||
-        strstr(text, "Clear") || strstr(text, "Fair")) return WeatherIcon::Sunny;
-    if (strstr(text, "partlycloudy") || strstr(text, "Partly")) return WeatherIcon::PartlyCloudy;
+        strstr(text, "Clear") || strstr(text, "Fair"))
+        return night ? WeatherIcon::ClearNight : WeatherIcon::Sunny;
+    if (strstr(text, "partlycloudy") || strstr(text, "Partly"))
+        return night ? WeatherIcon::PartlyCloudyNight : WeatherIcon::PartlyCloudy;
     if (strstr(text, "cloudy") || strstr(text, "Cloudy")) return WeatherIcon::Cloudy;
     if (strstr(text, "snow") || strstr(text, "Snow")) return WeatherIcon::Snow;
     if (strstr(text, "sleet") || strstr(text, "Sleet")) return WeatherIcon::Rain;

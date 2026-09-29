@@ -62,8 +62,10 @@ struct WeatherData {
  * @brief Weather icon classes for rendering
  */
 enum class WeatherIcon {
-    Sunny,       // clearsky / fair
-    PartlyCloudy,// partlycloudy
+    Sunny,       // clearsky / fair (day)
+    ClearNight,  // clearsky / fair (night)
+    PartlyCloudy,// partlycloudy (day)
+    PartlyCloudyNight, // partlycloudy (night)
     Cloudy,      // cloudy (kept name for compatibility; used as "cloudy")
     Overcast,    // legacy alias, treated like Cloudy
     Rain,        // rain / drizzle / sleet / showers / thunder
