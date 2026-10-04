@@ -9,8 +9,9 @@
  *               (default "weather,settings"); the home page is always
  *               treated as enabled.
  *
- * Recognized names: weather, gallery, settings, chat, ebook, news, calendar,
- * almanac, lifebar, yearprogress, log, doorsign.
+ * Recognized names: the core pages (gallery, settings, chat, log) plus every
+ * page a compiled-in widget registers with a config name (weather, doorsign,
+ * news, calendar, almanac, lifebar, yearprogress, ebook, ...).
  */
 
 #ifndef UI_PAGE_CONFIG_H
@@ -19,7 +20,7 @@
 #include <string>
 #include <vector>
 
-#include "rawdraw_ui_manager.h"
+#include "ui/page_id.h"
 
 namespace ui {
 namespace pageconfig {

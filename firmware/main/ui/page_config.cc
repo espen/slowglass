@@ -8,6 +8,7 @@
 #include <esp_log.h>
 
 #include "settings.h"
+#include "widgets/widget_registry.h"
 
 namespace ui {
 namespace pageconfig {
@@ -26,19 +27,13 @@ struct NamedPage {
     RawDrawPageId id;
 };
 
-constexpr NamedPage kNamedPages[] = {
-    {"weather", RawDrawPageId::Weather},
+// Core pages only; widget pages come from the widget registry so a widget
+// that is not compiled in simply has no name here.
+constexpr NamedPage kCorePages[] = {
     {"gallery", RawDrawPageId::Gallery},
     {"settings", RawDrawPageId::Settings},
     {"chat", RawDrawPageId::Chat},
-    {"ebook", RawDrawPageId::Ebook},
-    {"news", RawDrawPageId::News},
-    {"calendar", RawDrawPageId::Calendar},
-    {"almanac", RawDrawPageId::Almanac},
-    {"lifebar", RawDrawPageId::LifeBar},
-    {"yearprogress", RawDrawPageId::YearProgress},
     {"log", RawDrawPageId::Log},
-    {"doorsign", RawDrawPageId::MakePlans},
 };
 
 std::vector<std::string> SplitCsv(const std::string& csv) {
@@ -60,18 +55,25 @@ std::vector<std::string> SplitCsv(const std::string& csv) {
 }  // namespace
 
 const char* PageName(RawDrawPageId page) {
-    for (const auto& entry : kNamedPages) {
+    for (const auto& entry : kCorePages) {
         if (entry.id == page) return entry.name;
+    }
+    if (const auto* widget_page = widgets::FindPage(page)) {
+        return widget_page->config_name;  // nullptr for detail pages
     }
     return nullptr;
 }
 
 bool PageFromName(const std::string& name, RawDrawPageId* out) {
-    for (const auto& entry : kNamedPages) {
+    for (const auto& entry : kCorePages) {
         if (name == entry.name) {
             if (out) *out = entry.id;
             return true;
         }
+    }
+    if (const auto* widget_page = widgets::FindPageByName(name.c_str())) {
+        if (out) *out = widget_page->id;
+        return true;
     }
     return false;
 }
@@ -81,8 +83,19 @@ RawDrawPageId HomePage() {
     const std::string name = nvs.GetString(kHomeKey, kDefaultHome);
     RawDrawPageId page;
     if (PageFromName(name, &page)) return page;
-    ESP_LOGW(kTag, "Unknown home page '%s'; falling back to weather", name.c_str());
-    return RawDrawPageId::Weather;
+    // Stored (or default) home page is not in this build: fall back to the
+    // first registered widget page, then settings — never a blank screen.
+    for (const auto& def : widgets::All()) {
+        for (const auto& widget_page : def.pages) {
+            if (widget_page.config_name != nullptr) {
+                ESP_LOGW(kTag, "Unknown home page '%s'; falling back to '%s'",
+                         name.c_str(), widget_page.config_name);
+                return widget_page.id;
+            }
+        }
+    }
+    ESP_LOGW(kTag, "Unknown home page '%s'; falling back to settings", name.c_str());
+    return RawDrawPageId::Settings;
 }
 
 std::vector<RawDrawPageId> EnabledPages() {

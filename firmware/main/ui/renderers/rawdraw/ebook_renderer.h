@@ -21,6 +21,14 @@ public:
     void Init(int width, int height) override;
     void Render(uint8_t* fb, int width, int height) override;
     bool HandleInput(const ButtonEvent& event) override;
+    // Portrait reader uses the whole panel; landscape reader shows
+    // "file.txt 3/12" in the status bar.
+    bool WantsFullBleed() const override { return IsPortraitReader(); }
+    std::string GetStatusBarCentralText() const override {
+        if (!IsReaderMode() || IsPortraitReader()) return std::string();
+        return reader_filename_ + "  " + std::to_string(current_page_ + 1) +
+               "/" + std::to_string(total_pages_);
+    }
 
     // File list mode
     void SetFileList(const std::vector<std::string>& files);

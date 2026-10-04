@@ -31,6 +31,8 @@ public:
     void Init(int width, int height) override;
     void Render(uint8_t* fb, int width, int height) override;
     bool HandleInput(const ButtonEvent& event) override;
+    // Full-bleed dashboard with its own header — no status bar.
+    bool WantsFullBleed() const override { return true; }
 
     /** New schedule from the data source. */
     void Update(const MakePlansSchedule& schedule);

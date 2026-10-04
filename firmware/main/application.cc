@@ -7,9 +7,8 @@
 #include "common/photo_storage.h"
 #include <algorithm>
 
-#include "common/makeplans_api.h"
-#include "common/weather_api.h"
 #include "ui/page_config.h"
+#include "widgets/widget_registry.h"
 #include "display.h"
 #include "settings.h"
 #include "ui/rawdraw_ui_manager.h"
@@ -119,6 +118,23 @@ bool IsLocalHttpServiceRunning(const ui::RawDrawUiManager* manager) {
     return manager != nullptr && manager->IsHttpServerRunning();
 }
 
+// The narrow UI surface widget data callbacks may touch. Application is a
+// singleton that outlives everything, so capturing `this` is safe.
+widgets::WidgetContext MakeWidgetContext(Application* app) {
+    widgets::WidgetContext ctx;
+    ctx.current_page = [app]() {
+        auto* manager = app->GetRawDrawUiManager();
+        return manager ? manager->GetCurrentPage() : ui::RawDrawPageId::Count;
+    };
+    ctx.request_full_refresh = [app]() {
+        if (auto* manager = app->GetRawDrawUiManager()) manager->RequestFullRefresh();
+    };
+    ctx.request_active_page_refresh = [app]() {
+        if (auto* manager = app->GetRawDrawUiManager()) manager->RequestActivePageRefresh();
+    };
+    return ctx;
+}
+
 }  // namespace
 
 Application::Application() = default;
@@ -158,6 +174,7 @@ void Application::Initialize() {
     }
 
     auto* lcd = static_cast<CustomLcdDisplay*>(display);
+    widgets::InitAll();  // widget boot hooks before any UI/page-config reads
     rawdraw_ui_manager_ = std::make_unique<ui::RawDrawUiManager>();
     rawdraw_ui_manager_->Init(lcd, [lcd](const rawdraw::Rect&, bool urgent) {
         if (urgent) {
@@ -322,9 +339,7 @@ void Application::Initialize() {
                             UpdateLanIpSettingsItem(sr, ip);
                         }
                         if (started) {
-                            if (auto* mr = rawdraw_ui_manager_->GetMakePlansRenderer()) {
-                                mr->SetLanUrl("http://" + ip + "/makeplans");
-                            }
+                            widgets::OnLanServerStarted("http://" + ip);
                         }
                     }
                 }
@@ -334,32 +349,12 @@ void Application::Initialize() {
                     ESP_LOGI(kTag, "WiFi connected while config page is visible, returning to home page");
                     rawdraw_ui_manager_->SwitchPage(ui::pageconfig::HomePage());
                 }
-                // Register data sources once, then start/refresh them all now
-                // that we have connectivity (data_sources_start is idempotent
-                // and re-fetches on reconnect).
-                if (!weather_api_is_ready()) {
-                    weather_api_init([this](const WeatherData& weather) {
-                        if (!rawdraw_ui_manager_) return;
-                        if (auto* wr = rawdraw_ui_manager_->GetWeatherRenderer()) {
-                            wr->SetCityName(weather.city.c_str());
-                            wr->Update(weather);
-                        }
-                        if (rawdraw_ui_manager_->GetCurrentPage() == ui::RawDrawPageId::Weather) {
-                            rawdraw_ui_manager_->RequestFullRefresh();
-                        }
-                    });
-                }
-                if (!makeplans_api_is_ready()) {
-                    makeplans_api_init([this](const MakePlansSchedule& schedule) {
-                        if (!rawdraw_ui_manager_) return;
-                        if (auto* mr = rawdraw_ui_manager_->GetMakePlansRenderer()) {
-                            mr->Update(schedule);
-                        }
-                        if (rawdraw_ui_manager_->GetCurrentPage() == ui::RawDrawPageId::MakePlans) {
-                            rawdraw_ui_manager_->RequestActivePageRefresh();
-                        }
-                    });
-                }
+                // Let every widget register its data sources and wire its
+                // API callbacks, then start/refresh them all now that we
+                // have connectivity (widget hooks guard their own one-time
+                // init; data_sources_start is idempotent and re-fetches on
+                // reconnect).
+                widgets::OnNetworkUp(MakeWidgetContext(this));
                 data_sources_start();
                 UpdateStatusBarForUi();
                 ArmSyncSleepTimer();
@@ -604,10 +599,9 @@ void Application::EnterScheduledSleep() {
         // e.g. a 10-min transit source shortens the sleep automatically.
         int wake_minutes =
             data_sources_min_interval_minutes((int)kBatterySleepIntervalMinutes);
-        // Door sign: wake at the next booking boundary if that comes sooner,
-        // so the panel flips on time instead of up to a poll interval late.
-        wake_minutes = std::min(wake_minutes,
-                                makeplans_minutes_to_next_boundary(wake_minutes));
+        // Widgets can shorten the sleep (e.g. the door sign wakes at the
+        // next booking boundary so the panel flips on time, not a poll late).
+        wake_minutes = widgets::MinutesToNextWake(wake_minutes);
         esp_sleep_enable_timer_wakeup(wake_minutes * 60LL * 1000 * 1000);
         ESP_LOGI(kTag, "Entering deep sleep; timer wake in %d min, BOOT wakes sooner",
                  wake_minutes);

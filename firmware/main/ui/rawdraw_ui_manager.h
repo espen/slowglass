@@ -12,24 +12,16 @@
 // Include LVGL header FIRST so font_engine.h detects LVGL types and skips redefining them
 #include "boards/zectrix-s3-epaper-4.2/custom_lcd_display.h"
 
+#include "ui/page_id.h"
 #include "ui/renderers/rawdraw/page_renderer.h"
 #include "ui/renderers/rawdraw/chat_renderer.h"
 #include "ui/renderers/rawdraw/settings_renderer.h"
-#include "ui/renderers/rawdraw/ebook_renderer.h"
 #include "ui/renderers/rawdraw/wifi_renderer.h"
 #include "ui/renderers/rawdraw/photo_gallery.h"
 #include "ui/renderers/rawdraw/photo_detail_renderer.h"
-#include "ui/renderers/rawdraw/weather_renderer.h"
-#include "ui/renderers/rawdraw/weather_detail_renderer.h"
-#include "ui/renderers/rawdraw/news_renderer.h"
-#include "ui/renderers/rawdraw/lifebar_renderer.h"
-#include "ui/renderers/rawdraw/almanac_renderer.h"
 #include "ui/renderers/rawdraw/log_renderer.h"
-#include "ui/renderers/rawdraw/yearprogress_renderer.h"
 #include "ui/renderers/rawdraw/font_debug_renderer.h"
 #include "ui/renderers/rawdraw/font_metrics_renderer.h"
-#include "ui/renderers/rawdraw/calendar_renderer.h"
-#include "ui/renderers/rawdraw/makeplans_renderer.h"
 #include "ui/renderers/rawdraw/ap_transfer_renderer.h"
 #include "ui/renderers/rawdraw/ap_transfer_server.h"
 #include "rawdraw/rawdraw.h"
@@ -53,33 +45,8 @@ class CustomLcdDisplay;
 
 namespace ui {
 
-/**
- * @brief Page identifiers for the rawdraw UI
- *
- * Only pages with rawdraw renderers are included here.
- * Separate from ui::PageId to avoid conflict with LVGL UiManager.
- */
-enum class RawDrawPageId {
-    Chat = 0,
-    Ebook = 2,
-    Wifi = 3,
-    Settings = 4,
-    Gallery = 5,
-    Weather = 6,
-    News = 7,
-    WeatherDetail = 8,
-    PhotoDetail = 9,
-    LifeBar = 10,
-    Almanac = 11,
-    Log = 12,
-    YearProgress = 13,
-    Calendar = 14,
-    FontDebug = 15,
-    FontMetrics = 16,
-    APTransfer = 17,
-    MakePlans = 18,
-    Count,
-};
+// RawDrawPageId lives in ui/page_id.h so widgets and config code can name
+// pages without pulling in this (board-header-heavy) file.
 
 /**
  * @brief Status bar data for rawdraw rendering
@@ -314,34 +281,20 @@ public:
      */
     void SetWifiBlinking(bool blinking);
 
-    /**
-     * @brief Toggle lifebar page visibility (controlled via settings)
-     */
-    void SetLifeBarVisible(bool visible);
-    bool IsLifeBarVisible() const;
-
     // ============================================================
-    // Page renderer access (for advanced usage)
+    // Core page renderer access (widget renderers live in the widget
+    // registry; widgets keep their own typed pointers)
     // ============================================================
 
     rawdraw::ChatRenderer* GetChatRenderer() { return chat_renderer_.get(); }
-    rawdraw::EbookRenderer* GetEbookRenderer() { return ebook_renderer_.get(); }
     rawdraw::WifiRenderer* GetWifiRenderer() { return wifi_renderer_.get(); }
     rawdraw::SettingsRenderer* GetSettingsRenderer() { return settings_renderer_.get(); }
     rawdraw::PhotoGalleryRenderer* GetPhotoGalleryRenderer() { return photo_gallery_renderer_.get(); }
     rawdraw::PhotoDetailRenderer* GetPhotoDetailRenderer() { return photo_detail_renderer_.get(); }
-    rawdraw::WeatherRenderer* GetWeatherRenderer() { return weather_renderer_.get(); }
-    rawdraw::WeatherDetailRenderer* GetWeatherDetailRenderer() { return weather_detail_renderer_.get(); }
-    rawdraw::NewsRenderer* GetNewsRenderer() { return news_renderer_.get(); }
-    rawdraw::LifeBarRenderer* GetLifeBarRenderer() { return lifebar_renderer_.get(); }
-    rawdraw::AlmanacRenderer* GetAlmanacRenderer() { return almanac_renderer_.get(); }
     rawdraw::LogRenderer* GetLogRenderer() { return log_renderer_.get(); }
-    rawdraw::YearProgressRenderer* GetYearProgressRenderer() { return yearprogress_renderer_.get(); }
-    rawdraw::CalendarRenderer* GetCalendarRenderer() { return calendar_renderer_.get(); }
     rawdraw::FontDebugRenderer* GetFontDebugRenderer() { return font_debug_renderer_.get(); }
     rawdraw::FontMetricsRenderer* GetFontMetricsRenderer() { return font_metrics_renderer_.get(); }
     rawdraw::ApTransferRenderer* GetApTransferRenderer() { return ap_transfer_renderer_.get(); }
-    rawdraw::MakePlansRenderer* GetMakePlansRenderer() { return makeplans_renderer_.get(); }
 
     // ============================================================
     // Display dimensions
@@ -435,24 +388,16 @@ private:
     RawDrawStatusBarData status_bar_data_;
     mutable std::mutex ui_state_mutex_;
 
-    // Page renderers (owned)
+    // Core page renderers (owned). Widget page renderers are owned by the
+    // widget registry and reached through GetRendererForPage().
     std::unique_ptr<rawdraw::ChatRenderer> chat_renderer_;
-    std::unique_ptr<rawdraw::EbookRenderer> ebook_renderer_;
     std::unique_ptr<rawdraw::WifiRenderer> wifi_renderer_;
     std::unique_ptr<rawdraw::SettingsRenderer> settings_renderer_;
     std::unique_ptr<rawdraw::PhotoGalleryRenderer> photo_gallery_renderer_;
     std::unique_ptr<rawdraw::PhotoDetailRenderer> photo_detail_renderer_;
-    std::unique_ptr<rawdraw::WeatherRenderer> weather_renderer_;
-    std::unique_ptr<rawdraw::WeatherDetailRenderer> weather_detail_renderer_;
-    std::unique_ptr<rawdraw::NewsRenderer> news_renderer_;
-    std::unique_ptr<rawdraw::LifeBarRenderer> lifebar_renderer_;
-    std::unique_ptr<rawdraw::AlmanacRenderer> almanac_renderer_;
     std::unique_ptr<rawdraw::LogRenderer> log_renderer_;
-    std::unique_ptr<rawdraw::YearProgressRenderer> yearprogress_renderer_;
-    std::unique_ptr<rawdraw::CalendarRenderer> calendar_renderer_;
     std::unique_ptr<rawdraw::FontDebugRenderer> font_debug_renderer_;
     std::unique_ptr<rawdraw::FontMetricsRenderer> font_metrics_renderer_;
-    std::unique_ptr<rawdraw::MakePlansRenderer> makeplans_renderer_;
     std::unique_ptr<rawdraw::ApTransferRenderer> ap_transfer_renderer_;
     std::unique_ptr<rawdraw::ApTransferServer> ap_transfer_server_;
 

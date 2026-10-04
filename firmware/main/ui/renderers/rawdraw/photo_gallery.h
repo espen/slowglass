@@ -34,6 +34,8 @@ public:
     void Init(int width, int height) override;
     void Render(uint8_t* fb, int width, int height) override;
     bool HandleInput(const ButtonEvent& event) override;
+    // Fullscreen photo view is chrome-free (pure image, no status bar).
+    bool WantsFullBleed() const override { return IsFullscreenMode(); }
 
     // Display modes
     enum DisplayMode {

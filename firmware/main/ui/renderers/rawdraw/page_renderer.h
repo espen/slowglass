@@ -96,6 +96,18 @@ public:
     virtual void BeginStream() {}
     virtual void EndStream() {}
 
+    /**
+     * @brief Page draws the full 400x300 panel itself — no status bar or
+     * global frame. May vary at runtime (e.g. gallery fullscreen mode).
+     */
+    virtual bool WantsFullBleed() const { return false; }
+
+    /**
+     * @brief Text to show in the status bar center instead of the page
+     * title ("file.txt 1/3"). Empty = use the page title.
+     */
+    virtual std::string GetStatusBarCentralText() const { return std::string(); }
+
 protected:
     int width_ = 0;
     int height_ = 0;

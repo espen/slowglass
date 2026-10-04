@@ -20,6 +20,8 @@
 #include "rawdraw/components/calendar.h"
 #include "rawdraw/style.h"
 
+#include <cstdio>
+
 namespace rawdraw {
 
 class CalendarRenderer : public PageRenderer {
@@ -30,6 +32,11 @@ public:
     void Init(int width, int height) override;
     void Render(uint8_t* fb, int width, int height) override;
     bool HandleInput(const ButtonEvent& event) override;
+    std::string GetStatusBarCentralText() const override {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%d/%d ← →", year_, month_);
+        return buf;
+    }
 
     /**
      * @brief Get the last confirmed selected date (year, month, day)
