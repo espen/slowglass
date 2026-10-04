@@ -9,6 +9,7 @@
 #include "widgets/widget.h"
 
 #include "widgets/weather/weather_api.h"
+#include "widgets/weather/weather_http.h"
 #include "widgets/weather/weather_renderer.h"
 #include "widgets/weather/weather_detail_renderer.h"
 
@@ -56,6 +57,8 @@ void RegisterWeatherWidget() {
          }},
     };
     def.on_network_up = OnNetworkUp;
+    def.register_http = weather_register_http;
+    def.http_handler_count = kWeatherHttpHandlerCount;
     Register(std::move(def));
 }
 

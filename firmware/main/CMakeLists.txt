@@ -89,6 +89,7 @@ if(CONFIG_WIDGET_WEATHER)
     list(APPEND SOURCES
         "widgets/weather/weather_widget.cc"
         "widgets/weather/weather_api.cc"
+        "widgets/weather/weather_http.cc"
         "widgets/weather/weather_renderer.cc"
         "widgets/weather/weather_detail_renderer.cc"
         "widgets/weather/weather_card.cc"

@@ -16,6 +16,7 @@
 #include "weather_api.h"
 
 #include "common/data_source.h"
+#include "settings.h"
 
 #include <esp_log.h>
 #include <esp_http_client.h>
@@ -285,6 +286,23 @@ static bool HttpGet(const char* url, bool https) {
 
 static void Geolocate() {
     if (s_have_location) return;
+
+    // NVS override wins over the IP lookup — the only reliable option
+    // behind a VPN or a misregistered egress IP.
+    {
+        WeatherLocationOverride ov = weather_get_location_override();
+        if (ov.set) {
+            s_lat = ov.lat;
+            s_lon = ov.lon;
+            s_utc_offset_sec = ov.utc_offset_min * 60;
+            strncpy(s_city, ov.city.c_str(), sizeof(s_city) - 1);
+            s_city[sizeof(s_city) - 1] = '\0';
+            s_have_location = true;
+            ESP_LOGI(kTag, "Location override: %s (%.4f, %.4f) UTC%+d min",
+                     s_city, s_lat, s_lon, ov.utc_offset_min);
+            return;
+        }
+    }
 
     // Defaults in case anything below fails
     s_lat = kFallbackLat;
@@ -561,4 +579,63 @@ const WeatherData* weather_api_get_last_data() {
 
 const char* weather_api_get_city() {
     return s_city;
+}
+
+// ============================================================
+// Location override (NVS namespace "weather": lat, lon, city, tzmin)
+// ============================================================
+
+static const char* kWeatherNvsNamespace = "weather";
+
+WeatherLocationOverride weather_get_location_override() {
+    WeatherLocationOverride ov;
+    Settings nvs(kWeatherNvsNamespace, false);
+    const std::string lat = nvs.GetString("lat");
+    const std::string lon = nvs.GetString("lon");
+    if (lat.empty() || lon.empty()) return ov;
+    ov.set = true;
+    ov.lat = atof(lat.c_str());
+    ov.lon = atof(lon.c_str());
+    ov.city = nvs.GetString("city");
+    ov.utc_offset_min = nvs.GetInt("tzmin", 0);
+    return ov;
+}
+
+bool weather_set_location_override(double lat, double lon,
+                                   const std::string& city,
+                                   int utc_offset_min) {
+    if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0 ||
+        utc_offset_min < -14 * 60 || utc_offset_min > 14 * 60 ||
+        city.size() > 48) {
+        return false;
+    }
+    {
+        Settings nvs(kWeatherNvsNamespace, true);
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%.4f", lat);
+        nvs.SetString("lat", buf);
+        snprintf(buf, sizeof(buf), "%.4f", lon);
+        nvs.SetString("lon", buf);
+        nvs.SetString("city", city);
+        nvs.SetInt("tzmin", utc_offset_min);
+    }
+    ESP_LOGI(kTag, "Location override set: %s (%.4f, %.4f) UTC%+d min",
+             city.c_str(), lat, lon, utc_offset_min);
+    // Re-resolve on the next fetch and refresh the dashboard now.
+    s_have_location = false;
+    if (s_initialized) weather_api_fetch_now();
+    return true;
+}
+
+void weather_clear_location_override() {
+    {
+        Settings nvs(kWeatherNvsNamespace, true);
+        nvs.EraseKey("lat");
+        nvs.EraseKey("lon");
+        nvs.EraseKey("city");
+        nvs.EraseKey("tzmin");
+    }
+    ESP_LOGI(kTag, "Location override cleared; using IP geolocation");
+    s_have_location = false;
+    if (s_initialized) weather_api_fetch_now();
 }

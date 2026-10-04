@@ -131,4 +131,31 @@ const WeatherData* weather_api_get_last_data();
  */
 const char* weather_api_get_city();
 
+// ============================================================
+// Location override (NVS namespace "weather")
+// ============================================================
+//
+// When set, the override wins over IP geolocation — the only reliable
+// option behind a VPN or misregistered egress IP. Configured from the
+// /weather page or POST /api/weather.
+
+struct WeatherLocationOverride {
+    bool set = false;
+    double lat = 0.0;
+    double lon = 0.0;
+    std::string city;        // display label on the dashboard
+    int utc_offset_min = 0;  // local-time offset for day bucketing
+};
+
+WeatherLocationOverride weather_get_location_override();
+
+/** Persist an override and re-resolve + refetch immediately.
+ *  Returns false on out-of-range values. */
+bool weather_set_location_override(double lat, double lon,
+                                   const std::string& city,
+                                   int utc_offset_min);
+
+/** Remove the override; next fetch falls back to IP geolocation. */
+void weather_clear_location_override();
+
 #endif  // WEATHER_API_H
