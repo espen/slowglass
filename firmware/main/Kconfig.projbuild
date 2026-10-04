@@ -41,4 +41,45 @@ config ZECTRIX_EPD_4COLOR_BOOT_TEST_PATTERN
         Show black/white/red/yellow vertical bars once during display
         initialization so a newly connected 4-color panel can be verified.
 
+menu "Widgets"
+    help
+        Pick which widgets this firmware image contains. Disabling a
+        widget removes its code, pages, HTTP endpoints, data source, and
+        battery wakeups from the build; its name simply disappears from
+        the page config (/api/pages) and quick-switch menu.
+
+config WIDGET_WEATHER
+    bool "Weather dashboard (MET Norway)"
+    default y
+
+config WIDGET_MAKEPLANS
+    bool "MakePlans door sign"
+    default y
+
+config WIDGET_NEWS
+    bool "News page"
+    default y
+
+config WIDGET_CALENDAR
+    bool "Monthly calendar"
+    default y
+
+config WIDGET_ALMANAC
+    bool "Almanac"
+    default y
+
+config WIDGET_LIFEBAR
+    bool "Life progress bar"
+    default y
+
+config WIDGET_YEARPROGRESS
+    bool "Year progress"
+    default y
+
+config WIDGET_EBOOK
+    bool "Ebook reader"
+    default y
+
+endmenu
+
 endmenu

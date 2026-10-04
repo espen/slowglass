@@ -1,0 +1,13 @@
+# Door-sign-only image: just the MakePlans widget (plus core pages:
+# gallery, settings, chat, log). Build with:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.doorsign" build
+# Remember to also set the home page once on the device:
+#   curl -X POST http://<device>/api/pages -d '{"home":"doorsign"}'
+CONFIG_WIDGET_WEATHER=n
+CONFIG_WIDGET_NEWS=n
+CONFIG_WIDGET_CALENDAR=n
+CONFIG_WIDGET_ALMANAC=n
+CONFIG_WIDGET_LIFEBAR=n
+CONFIG_WIDGET_YEARPROGRESS=n
+CONFIG_WIDGET_EBOOK=n
+CONFIG_WIDGET_MAKEPLANS=y

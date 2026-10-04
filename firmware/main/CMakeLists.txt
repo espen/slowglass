@@ -78,31 +78,66 @@ set(SOURCES
     "ui/epd_refresh.cc"
     "widgets/widget_registry.cc"
     "widgets/widgets_init.cc"
-    "widgets/weather/weather_widget.cc"
-    "widgets/weather/weather_api.cc"
-    "widgets/weather/weather_renderer.cc"
-    "widgets/weather/weather_detail_renderer.cc"
-    "widgets/weather/weather_card.cc"
-    "widgets/makeplans/makeplans_widget.cc"
-    "widgets/makeplans/makeplans_api.cc"
-    "widgets/makeplans/makeplans_renderer.cc"
-    "widgets/makeplans/makeplans_http.cc"
-    "widgets/news/news_widget.cc"
-    "widgets/news/news_renderer.cc"
-    "widgets/calendar/calendar_widget.cc"
-    "widgets/calendar/calendar_renderer.cc"
-    "widgets/almanac/almanac_widget.cc"
-    "widgets/almanac/almanac_renderer.cc"
-    "widgets/lifebar/lifebar_widget.cc"
-    "widgets/lifebar/lifebar_renderer.cc"
-    "widgets/yearprogress/yearprogress_widget.cc"
-    "widgets/yearprogress/yearprogress_renderer.cc"
-    "widgets/ebook/ebook_widget.cc"
-    "widgets/ebook/ebook_renderer.cc"
     "streaming/text_chunker.cc"
     "streaming/tts_streamer.cc"
     "streaming/stream_pipeline.cc"
 )
+
+# Widgets: one guarded block per widget, matching the CONFIG_WIDGET_*
+# options in Kconfig.projbuild and the guards in widgets/widgets_init.cc.
+if(CONFIG_WIDGET_WEATHER)
+    list(APPEND SOURCES
+        "widgets/weather/weather_widget.cc"
+        "widgets/weather/weather_api.cc"
+        "widgets/weather/weather_renderer.cc"
+        "widgets/weather/weather_detail_renderer.cc"
+        "widgets/weather/weather_card.cc"
+    )
+endif()
+if(CONFIG_WIDGET_MAKEPLANS)
+    list(APPEND SOURCES
+        "widgets/makeplans/makeplans_widget.cc"
+        "widgets/makeplans/makeplans_api.cc"
+        "widgets/makeplans/makeplans_renderer.cc"
+        "widgets/makeplans/makeplans_http.cc"
+    )
+endif()
+if(CONFIG_WIDGET_NEWS)
+    list(APPEND SOURCES
+        "widgets/news/news_widget.cc"
+        "widgets/news/news_renderer.cc"
+    )
+endif()
+if(CONFIG_WIDGET_CALENDAR)
+    list(APPEND SOURCES
+        "widgets/calendar/calendar_widget.cc"
+        "widgets/calendar/calendar_renderer.cc"
+    )
+endif()
+if(CONFIG_WIDGET_ALMANAC)
+    list(APPEND SOURCES
+        "widgets/almanac/almanac_widget.cc"
+        "widgets/almanac/almanac_renderer.cc"
+    )
+endif()
+if(CONFIG_WIDGET_LIFEBAR)
+    list(APPEND SOURCES
+        "widgets/lifebar/lifebar_widget.cc"
+        "widgets/lifebar/lifebar_renderer.cc"
+    )
+endif()
+if(CONFIG_WIDGET_YEARPROGRESS)
+    list(APPEND SOURCES
+        "widgets/yearprogress/yearprogress_widget.cc"
+        "widgets/yearprogress/yearprogress_renderer.cc"
+    )
+endif()
+if(CONFIG_WIDGET_EBOOK)
+    list(APPEND SOURCES
+        "widgets/ebook/ebook_widget.cc"
+        "widgets/ebook/ebook_renderer.cc"
+    )
+endif()
 
 set(INCLUDE_DIRS
     "."

@@ -38,8 +38,11 @@ firmware/.cache/
 firmware/.claude/
 firmware/__pycache__/
 firmware/build/
+firmware/build_*/
 firmware/sdkconfig
 firmware/sdkconfig.old
+firmware/sdkconfig.doorsign
+firmware/sdkconfig.doorsign.old
 firmware/managed_components/
 firmware/releases/
 firmware/debugscreenshot/

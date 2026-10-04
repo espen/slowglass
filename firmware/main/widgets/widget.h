@@ -11,10 +11,11 @@
  * PORTABILITY RULE: widget code may include only
  *   - widgets/widget.h (this file)
  *   - ui/page_id.h
- *   - rawdraw/* (the drawing library) and ui/renderers/rawdraw/page_renderer.h
+ *   - the rawdraw drawing library and ui/renderers/rawdraw/page_renderer.h
  *   - common/data_source.h, common/httpd_helpers.h, settings.h (NVS)
  *   - ESP-IDF headers
- * Never application.h, boards/*, or ui/rawdraw_ui_manager.h. Moving a widget
+ * Never application.h, board headers, or ui/rawdraw_ui_manager.h. Moving a
+ * widget
  * to another firmware then means copying its directory and providing these
  * few contracts.
  *
