@@ -462,6 +462,7 @@ static bool ParseForecast(const char* json, WeatherData* out) {
                 WeatherHourly h;
                 int64_t h_local = ((epoch + s_utc_offset_sec) % 86400 + 86400) % 86400;
                 h.hour_local = (int)(h_local / 3600);
+                h.epoch = epoch;
                 h.temp = (int32_t)lround(h_temp);
                 const char* h_sym = symbol_code(entry);
                 h.icon_code = h_sym ? h_sym : "";

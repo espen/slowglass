@@ -46,6 +46,7 @@ struct WeatherForecastDay {
  */
 struct WeatherHourly {
     int hour_local = 0;       // Local hour of day, 0-23
+    int64_t epoch = 0;        // UTC epoch of the entry (for lead-time checks)
     int32_t temp = 0;         // Rounded air temperature
     std::string icon_code;    // MET Norway symbol_code
     float precip_mm = 0.0f;   // Precipitation for the hour (next_1_hours)
