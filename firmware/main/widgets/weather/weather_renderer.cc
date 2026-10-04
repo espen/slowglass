@@ -6,8 +6,8 @@
  *   header  — city left, date right, heavy rule
  *   hero    — 7-segment temperature, condition, H/L range, feels-like;
  *             big drawn icon right
- *   today   — 4 slots on the 3-hour day grid (next 00/03/../21 that are
- *             75+ min out): time, mini icon, precip mm when wet, temp
+ *   today   — 4 slots at +3/+6/+9/+12 h from the clock at render time:
+ *             time, centered mini icon (+ red precip mm when wet), temp
  *   strip   — inverted "TOMORROW" band: tag, small icon, high/low, condition
  *
  * Color semantics: YELLOW = sun & low temps, RED = precipitation & freezing,
@@ -433,11 +433,12 @@ void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
     }
     DrawHeroIcon(fb, width, now_icon, width - 84, hero_y + 52);
 
-    // ---- TODAY band: 4 slots on the 3-hour day grid (00/03/.../21) ----
-    // Anchored to the clock at render time, not the fetch: entries less
-    // than 75 min away are skipped (that weather is already outside the
-    // window), so the first slot never decays into "now" between the
-    // hourly fetches. Fixed grid hours read like a plan for the day.
+    // ---- TODAY band: 4 slots at +3/+6/+9/+12 h from the clock ----
+    // Anchored to render time, not the fetch, so the first slot never
+    // decays into "now" between the hourly fetches (the old +2h-from-fetch
+    // slot could be 25 min away by the end of a fetch cycle — weather the
+    // user already knows). +3h minimum lead; even spacing always fills
+    // all four columns.
     const int band_top = 170;
     const int strip_h = 40;
     const Rect strip{0, height - strip_h, width, strip_h};
@@ -448,10 +449,10 @@ void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
     int picks[4] = {-1, -1, -1, -1};
     int pick_count = 0;
     const int64_t now_epoch = (int64_t)time(nullptr);
-    constexpr int64_t kMinLeadSec = 75 * 60;
     for (int i = 0; i < n && pick_count < 4; ++i) {
-        if (hourly[i].epoch - now_epoch < kMinLeadSec) continue;
-        if (hourly[i].hour_local % 3 != 0) continue;
+        const int target_hours = 3 * (pick_count + 1);  // +3/+6/+9/+12
+        const int64_t lead = hourly[i].epoch - now_epoch;
+        if (lead < (int64_t)target_hours * 3600 - 1800) continue;  // nearest hour
         picks[pick_count++] = i;
     }
     if (pick_count == 0 && n >= 4) {
@@ -476,15 +477,14 @@ void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
             DrawText(fb, width, cx - hh_w / 2, InkCenteredTextTopY(font_, hh, band_top + 13, 0),
                      hh, font_, BLACK);
 
-            // Wet hours: icon shifts left to make room for the amount —
-            // the "do I bike at 15?" number this strip exists for.
-            const bool wet = h.precip_mm >= 0.1f;
-            DrawMiniIcon(fb, width, ParseWeatherIcon(h.icon_code.c_str()),
-                         wet ? cx - 16 : cx, band_top + 44);
-            if (wet) {
+            // Icons stay centered so all four slots align; wet hours get
+            // the amount in red beside the icon — the "do I bike at 15?"
+            // number this strip exists for.
+            DrawMiniIcon(fb, width, ParseWeatherIcon(h.icon_code.c_str()), cx, band_top + 44);
+            if (h.precip_mm >= 0.1f) {
                 char pr[16];
                 snprintf(pr, sizeof(pr), "%.1f", (double)h.precip_mm);
-                DrawText(fb, width, cx + 2,
+                DrawText(fb, width, cx + 18,
                          InkCenteredTextTopY(font_, pr, band_top + 44, 0),
                          pr, font_, RED);
             }
