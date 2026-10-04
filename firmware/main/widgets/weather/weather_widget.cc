@@ -8,9 +8,9 @@
 
 #include "widgets/widget.h"
 
-#include "common/weather_api.h"
-#include "ui/renderers/rawdraw/weather_renderer.h"
-#include "ui/renderers/rawdraw/weather_detail_renderer.h"
+#include "widgets/weather/weather_api.h"
+#include "widgets/weather/weather_renderer.h"
+#include "widgets/weather/weather_detail_renderer.h"
 
 namespace widgets {
 

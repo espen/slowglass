@@ -6,7 +6,7 @@
 #ifndef RAWDRAW_NEWS_RENDERER_H
 #define RAWDRAW_NEWS_RENDERER_H
 
-#include "page_renderer.h"
+#include "ui/renderers/rawdraw/page_renderer.h"
 #include <functional>
 #include <string>
 #include <utility>

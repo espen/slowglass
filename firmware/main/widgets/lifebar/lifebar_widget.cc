@@ -5,7 +5,7 @@
 
 #include "widgets/widget.h"
 
-#include "ui/renderers/rawdraw/lifebar_renderer.h"
+#include "widgets/lifebar/lifebar_renderer.h"
 
 namespace widgets {
 

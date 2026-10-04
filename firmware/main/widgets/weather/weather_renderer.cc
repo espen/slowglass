@@ -18,7 +18,7 @@
 
 #include "weather_renderer.h"
 
-#include "common/weather_api.h"
+#include "widgets/weather/weather_api.h"
 #include "rawdraw/layout_utils.h"
 #include "rawdraw/rawdraw.h"
 #include "rawdraw/style.h"

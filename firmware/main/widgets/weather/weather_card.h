@@ -23,12 +23,12 @@
 
 #include <stdint.h>
 #include <string>
-#include "rawdraw.h"
-#include "font_engine.h"
-#include "framebuffer.h"
-#include "refresh.h"
-#include "style.h"
-#include "common/weather_api.h"
+#include "rawdraw/rawdraw.h"
+#include "rawdraw/font_engine.h"
+#include "rawdraw/framebuffer.h"
+#include "rawdraw/refresh.h"
+#include "rawdraw/style.h"
+#include "widgets/weather/weather_api.h"
 
 // Forward declaration
 struct WeatherData;

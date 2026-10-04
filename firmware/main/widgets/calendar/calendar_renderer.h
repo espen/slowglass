@@ -16,7 +16,7 @@
 #ifndef RAWDRAW_CALENDAR_RENDERER_H
 #define RAWDRAW_CALENDAR_RENDERER_H
 
-#include "page_renderer.h"
+#include "ui/renderers/rawdraw/page_renderer.h"
 #include "rawdraw/components/calendar.h"
 #include "rawdraw/style.h"
 

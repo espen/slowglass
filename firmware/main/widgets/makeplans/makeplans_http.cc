@@ -9,7 +9,7 @@
 #include "widgets/makeplans/makeplans_http.h"
 
 #include "common/httpd_helpers.h"
-#include "common/makeplans_api.h"
+#include "widgets/makeplans/makeplans_api.h"
 #include "settings.h"
 
 #include <esp_log.h>

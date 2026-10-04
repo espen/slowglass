@@ -5,7 +5,7 @@
 
 #include "widgets/widget.h"
 
-#include "ui/renderers/rawdraw/news_renderer.h"
+#include "widgets/news/news_renderer.h"
 
 namespace widgets {
 

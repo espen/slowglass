@@ -5,7 +5,7 @@
 
 #include "widgets/widget.h"
 
-#include "ui/renderers/rawdraw/almanac_renderer.h"
+#include "widgets/almanac/almanac_renderer.h"
 
 namespace widgets {
 

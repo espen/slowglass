@@ -5,7 +5,7 @@
 
 #include "widgets/widget.h"
 
-#include "ui/renderers/rawdraw/calendar_renderer.h"
+#include "widgets/calendar/calendar_renderer.h"
 
 namespace widgets {
 

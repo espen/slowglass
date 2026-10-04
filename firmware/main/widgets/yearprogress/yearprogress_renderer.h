@@ -12,7 +12,7 @@
 #ifndef RAWDRAW_YEARPROGRESS_RENDERER_H
 #define RAWDRAW_YEARPROGRESS_RENDERER_H
 
-#include "page_renderer.h"
+#include "ui/renderers/rawdraw/page_renderer.h"
 #include <cstdint>
 
 namespace rawdraw {

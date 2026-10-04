@@ -5,7 +5,7 @@
 
 #include "widgets/widget.h"
 
-#include "ui/renderers/rawdraw/yearprogress_renderer.h"
+#include "widgets/yearprogress/yearprogress_renderer.h"
 
 namespace widgets {
 

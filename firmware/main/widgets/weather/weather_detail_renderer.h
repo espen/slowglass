@@ -6,8 +6,8 @@
 #ifndef RAWDRAW_WEATHER_DETAIL_RENDERER_H
 #define RAWDRAW_WEATHER_DETAIL_RENDERER_H
 
-#include "common/weather_api.h"
-#include "page_renderer.h"
+#include "widgets/weather/weather_api.h"
+#include "ui/renderers/rawdraw/page_renderer.h"
 #include <string>
 #include <vector>
 

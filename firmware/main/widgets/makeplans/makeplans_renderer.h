@@ -6,8 +6,8 @@
 #ifndef RAWDRAW_MAKEPLANS_RENDERER_H
 #define RAWDRAW_MAKEPLANS_RENDERER_H
 
-#include "common/makeplans_api.h"
-#include "page_renderer.h"
+#include "widgets/makeplans/makeplans_api.h"
+#include "ui/renderers/rawdraw/page_renderer.h"
 #include "rawdraw/style.h"
 #include <string>
 

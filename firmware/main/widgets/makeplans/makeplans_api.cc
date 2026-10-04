@@ -19,11 +19,9 @@
 
 #include "makeplans_api.h"
 
-#include "boards/zectrix/zectrix_nfc.h"
-#include "data_source.h"
+#include "common/data_source.h"
+#include "common/nfc_tag.h"
 #include "settings.h"
-
-extern "C" ZectrixNfc* ZectrixGetNfc();
 
 #include <esp_log.h>
 #include <esp_http_client.h>
@@ -450,25 +448,10 @@ static void SyncNfcTag() {
         if (nvs.GetString(kKeyNfcWritten) == url) return;  // tag already current
     }
 
-    ZectrixNfc* nfc = ZectrixGetNfc();
-    if (nfc == nullptr) {
-        ESP_LOGW(kTag, "NFC unavailable; tag not updated");
-        return;
-    }
-    const bool was_powered = nfc->IsPowered();
-    if (!was_powered && !nfc->PowerOn()) {
-        ESP_LOGW(kTag, "NFC power-on failed; tag not updated");
-        return;
-    }
-    const esp_err_t err = nfc->WriteUriNdef(url);
-    if (!was_powered) nfc->PowerOff();
-
-    if (err == ESP_OK) {
+    if (nfc_tag_write_uri(url)) {
         Settings nvs(kNvsNamespace, true);
         nvs.SetString(kKeyNfcWritten, url);
         ESP_LOGI(kTag, "NFC tag now serves %s", url.c_str());
-    } else {
-        ESP_LOGE(kTag, "NFC tag write failed: %s", esp_err_to_name(err));
     }
 }
 

@@ -5,7 +5,7 @@
 
 #include "widgets/widget.h"
 
-#include "ui/renderers/rawdraw/ebook_renderer.h"
+#include "widgets/ebook/ebook_renderer.h"
 
 namespace widgets {
 

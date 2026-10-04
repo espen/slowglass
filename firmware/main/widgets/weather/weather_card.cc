@@ -14,8 +14,8 @@
  * Avoids clock zone (X=320, W=80, H=32 at top-right).
  */
 
-#include "weather_card.h"
-#include "common/weather_api.h"
+#include "widgets/weather/weather_card.h"
+#include "widgets/weather/weather_api.h"
 #include "rawdraw/rawdraw.h"
 #include "rawdraw/style.h"
 #include "rawdraw/theme.h"

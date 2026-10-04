@@ -10,8 +10,8 @@
 
 #include "widgets/widget.h"
 
-#include "common/makeplans_api.h"
-#include "ui/renderers/rawdraw/makeplans_renderer.h"
+#include "widgets/makeplans/makeplans_api.h"
+#include "widgets/makeplans/makeplans_renderer.h"
 #include "widgets/makeplans/makeplans_http.h"
 
 namespace widgets {

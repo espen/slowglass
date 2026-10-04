@@ -15,7 +15,7 @@
 
 #include "weather_api.h"
 
-#include "data_source.h"
+#include "common/data_source.h"
 
 #include <esp_log.h>
 #include <esp_http_client.h>
