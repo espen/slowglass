@@ -124,6 +124,36 @@ static std::string SymbolToEnglish(const std::string& symbol) {
 }
 
 // ============================================================
+// Feels-like temperature (the API has no apparent-temperature field;
+// computed the same way yr.no does — see .agents/plans/weather-feels-like.md)
+// ============================================================
+
+static double ComputeFeelsLike(double temp_c, double wind_ms, double rh_pct) {
+    const double v_kmh = wind_ms * 3.6;
+    // JAG/TI wind chill (Environment Canada / NWS metric form).
+    // Valid for T <= 10°C and 10 m wind >= 4.8 km/h — both inputs match
+    // what MET provides (2 m temperature, 10 m wind).
+    if (temp_c <= 10.0 && v_kmh >= 4.8) {
+        const double v16 = pow(v_kmh, 0.16);
+        return 13.12 + 0.6215 * temp_c - 11.37 * v16 + 0.3965 * temp_c * v16;
+    }
+    // NOAA Rothfusz heat-index regression (°F), valid T >= 80°F, RH >= 40%.
+    // The NWS low/high-humidity adjustment terms are skipped: those corners
+    // (RH < 13% or > 85% while hot) don't occur here and cost < 1°F.
+    if (temp_c >= 26.7 && rh_pct >= 40.0) {
+        const double tf = temp_c * 9.0 / 5.0 + 32.0;
+        const double rh = rh_pct;
+        const double hi = -42.379 + 2.04901523 * tf + 10.14333127 * rh
+                        - 0.22475541 * tf * rh - 6.83783e-3 * tf * tf
+                        - 5.481717e-2 * rh * rh + 1.22874e-3 * tf * tf * rh
+                        + 8.5282e-4 * tf * rh * rh - 1.99e-6 * tf * tf * rh * rh;
+        return (hi - 32.0) * 5.0 / 9.0;
+    }
+    // 10–26.7°C or calm air: no model applies (same behaviour as yr/NWS).
+    return temp_c;
+}
+
+// ============================================================
 // Time helpers
 // ============================================================
 
@@ -374,6 +404,16 @@ static bool ParseForecast(const char* json, WeatherData* out) {
     out->weather_icon = now_symbol ? now_symbol : "";
     out->weather_text = SymbolToEnglish(out->weather_icon);
 
+    // Feels-like: shown only when it rounds >= 2° away from the actual temp,
+    // so the renderer can simply check for an empty string.
+    const int32_t feels = (int32_t)lround(ComputeFeelsLike(temp_now, wind_speed, humidity));
+    if (std::abs(feels - out->temp_int) >= 2) {
+        snprintf(buf, sizeof(buf), "%d", (int)feels);
+        out->feels_like = buf;
+    } else {
+        out->feels_like.clear();
+    }
+
     char hhmm[8], date_str[20];
     FormatLocal(now_epoch, s_utc_offset_sec, hhmm, sizeof(hhmm), date_str, sizeof(date_str));
     out->update_time = hhmm;
@@ -387,11 +427,35 @@ static bool ParseForecast(const char* json, WeatherData* out) {
         bool any = false;
     } days[2];
 
+    out->hourly.clear();
+
     cJSON* entry = nullptr;
     cJSON_ArrayForEach(entry, series) {
         cJSON* t = cJSON_GetObjectItem(entry, "time");
         int64_t epoch = ParseIso8601Utc(cJSON_IsString(t) ? t->valuestring : nullptr);
         if (epoch == 0) continue;
+
+        // --- Hourly timeline: entries after "now", next 12 h ---
+        // (MET keeps 1 h resolution for the first ~2 days, so these arrive
+        // as consecutive hours: hourly[0] = +1 h, hourly[1] = +2 h, ...)
+        if (epoch > now_epoch && epoch <= now_epoch + 12 * 3600) {
+            double h_temp;
+            if (instant_detail(entry, "air_temperature", &h_temp)) {
+                WeatherHourly h;
+                int64_t h_local = ((epoch + s_utc_offset_sec) % 86400 + 86400) % 86400;
+                h.hour_local = (int)(h_local / 3600);
+                h.temp = (int32_t)lround(h_temp);
+                const char* h_sym = symbol_code(entry);
+                h.icon_code = h_sym ? h_sym : "";
+                cJSON* h_data = cJSON_GetObjectItem(entry, "data");
+                cJSON* h_n1 = h_data ? cJSON_GetObjectItem(h_data, "next_1_hours") : nullptr;
+                cJSON* h_det = h_n1 ? cJSON_GetObjectItem(h_n1, "details") : nullptr;
+                cJSON* h_pr = h_det ? cJSON_GetObjectItem(h_det, "precipitation_amount") : nullptr;
+                if (cJSON_IsNumber(h_pr)) h.precip_mm = (float)h_pr->valuedouble;
+                out->hourly.push_back(h);
+            }
+        }
+
         int64_t day = LocalDayIndex(epoch, s_utc_offset_sec);
         if (day != today && day != today + 1) continue;
         DayAgg& agg = days[day - today];
@@ -454,9 +518,10 @@ static void DoFetch(void* arg) {
     }
 
     s_last_data = data;
-    ESP_LOGI(kTag, "Weather: %s %s°C in %s, forecast days=%d",
-             data.weather_text.c_str(), data.temp.c_str(), data.city.c_str(),
-             (int)data.forecast.size());
+    ESP_LOGI(kTag, "Weather: %s %s°C (feels %s) in %s, forecast days=%d, hourly=%d",
+             data.weather_text.c_str(), data.temp.c_str(),
+             data.feels_like.empty() ? "-" : data.feels_like.c_str(),
+             data.city.c_str(), (int)data.forecast.size(), (int)data.hourly.size());
 
     if (s_callback) {
         s_callback(data);

@@ -49177,6 +49177,8 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
  *  PUBLIC FONT
  *----------------*/
 
+extern const lv_font_t latin1_supplement_16;
+
 /*Initialize a public general font descriptor*/
 #if LVGL_VERSION_MAJOR >= 8
 const lv_font_t SourceHanSansSC_Regular_slim = {
@@ -49195,7 +49197,7 @@ lv_font_t SourceHanSansSC_Regular_slim = {
     .underline_thickness = 1,
 #endif
     .dsc = &font_dsc,          /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
-    .fallback = NULL,
+    .fallback = &latin1_supplement_16,    /*Latin-1 glyphs (NotoSans); main font is a CJK subset*/
     .user_data = NULL
 };
 

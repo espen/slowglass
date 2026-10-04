@@ -4,9 +4,10 @@
  *
  * Layout (see design/mockup.html in the project root):
  *   header  — city left, date right, heavy rule
- *   hero    — large 7-segment temperature + condition, big drawn icon right
+ *   hero    — 7-segment temperature, condition, H/L range, feels-like;
+ *             big drawn icon right
+ *   today   — 4 rolling hourly slots (+2/+4/+6/+8 h): time, mini icon, temp
  *   strip   — inverted "TOMORROW" band: tag, small icon, high/low, condition
- *   footer  — MET Norway attribution + data timestamp
  *
  * Color semantics: YELLOW = sun & low temps, RED = precipitation & freezing,
  * BLACK/WHITE = structure. Red only appears when the weather warrants it.
@@ -24,12 +25,15 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
 // External font references
-extern const lv_font_t SourceHanSansSC_Regular_slim;
-extern const lv_font_t SourceHanSansSC_Medium_slim;
+// Proper Western fonts (Source Sans 3, full Latin-1) — city names like
+// Tromsø need real æøå glyphs with Western metrics.
+extern const lv_font_t latin_ui_16;
+extern const lv_font_t latin_ui_24;
 extern const lv_font_t weather_icons_16;
 
 namespace rawdraw {
@@ -76,8 +80,8 @@ void DrawSegDigit(uint8_t* fb, int width, int x, int y, int digit, const DigitMe
 }
 
 // Draws e.g. "-7°"; returns total width used
-int DrawSegTemperature(uint8_t* fb, int width, int x, int y, int temp, Color c) {
-    DigitMetrics m;
+int DrawSegTemperature(uint8_t* fb, int width, int x, int y, int temp, Color c,
+                       const DigitMetrics& m = DigitMetrics{}) {
     int cx = x;
     if (temp < 0) {
         DrawRect(fb, width, {cx, y + m.h / 2 - m.t / 2, m.w - 12, m.t}, c);  // minus
@@ -90,9 +94,10 @@ int DrawSegTemperature(uint8_t* fb, int width, int x, int y, int temp, Color c) 
         DrawSegDigit(fb, width, cx, y, *p - '0', m, c);
         cx += m.w + m.gap;
     }
-    // degree mark
-    DrawCircleBorder(fb, width, {cx + 8, y + 9}, 8, 4, c);
-    cx += 20;
+    // degree mark, scaled to the digit height
+    const int deg_r = m.h / 9;
+    DrawCircleBorder(fb, width, {cx + deg_r, y + deg_r + 1}, deg_r, m.t / 3 + 1, c);
+    cx += deg_r * 2 + 4;
     return cx - x;
 }
 
@@ -214,6 +219,88 @@ void DrawHeroIcon(uint8_t* fb, int width, WeatherIcon icon, int cx, int cy) {
     }
 }
 
+// ============================================================
+// Mini icons for the TODAY timeline slots (~36 px box, white bg)
+// ============================================================
+
+void DrawMiniCloud(uint8_t* fb, int width, int cx, int cy, int s, Color fill, Color outline) {
+    // Simplified two-lobe cloud; 2 px outline so small sizes don't clog
+    const Point big{cx + s / 3, cy};
+    const Point small{cx - s / 2, cy + s / 5};
+    const Rect base{cx - s, cy + s / 5, s * 2, (s * 3) / 5};
+    DrawCircle(fb, width, big, s, outline);
+    DrawCircle(fb, width, small, (s * 3) / 4, outline);
+    DrawRect(fb, width, base, outline);
+    if (outline != fill) {
+        DrawCircle(fb, width, big, s - 2, fill);
+        DrawCircle(fb, width, small, (s * 3) / 4 - 2, fill);
+        DrawRect(fb, width, {base.x + 2, base.y, base.w - 4, base.h - 2}, fill);
+    }
+}
+
+void DrawMiniSun(uint8_t* fb, int width, int cx, int cy, int r) {
+    DrawCircle(fb, width, {cx, cy}, r, YELLOW);
+    DrawCircleBorder(fb, width, {cx, cy}, r, 2, BLACK);
+    const int in = r + 3, out = r + 8;
+    DrawRect(fb, width, {cx - 1, cy - out, 3, out - in}, BLACK);
+    DrawRect(fb, width, {cx - 1, cy + in, 3, out - in}, BLACK);
+    DrawRect(fb, width, {cx - out, cy - 1, out - in, 3}, BLACK);
+    DrawRect(fb, width, {cx + in, cy - 1, out - in, 3}, BLACK);
+}
+
+void DrawMiniMoon(uint8_t* fb, int width, int cx, int cy, int r) {
+    DrawCircle(fb, width, {cx, cy}, r, YELLOW);
+    DrawCircleBorder(fb, width, {cx, cy}, r, 2, BLACK);
+    DrawCircleBorder(fb, width, {cx - r / 3, cy - r / 4}, r / 4, 1, BLACK);
+    DrawCircleBorder(fb, width, {cx + r / 4, cy + r / 5}, r / 5, 1, BLACK);
+}
+
+void DrawMiniIcon(uint8_t* fb, int width, WeatherIcon icon, int cx, int cy) {
+    switch (icon) {
+        case WeatherIcon::Sunny:
+            DrawMiniSun(fb, width, cx, cy, 8);
+            break;
+        case WeatherIcon::ClearNight:
+            DrawMiniMoon(fb, width, cx, cy, 10);
+            break;
+        case WeatherIcon::PartlyCloudy:
+            DrawMiniSun(fb, width, cx - 5, cy - 6, 6);
+            DrawMiniCloud(fb, width, cx + 3, cy + 4, 8, WHITE, BLACK);
+            break;
+        case WeatherIcon::PartlyCloudyNight:
+            DrawMiniMoon(fb, width, cx - 5, cy - 6, 7);
+            DrawMiniCloud(fb, width, cx + 3, cy + 4, 8, WHITE, BLACK);
+            break;
+        case WeatherIcon::Cloudy:
+        case WeatherIcon::Overcast:
+            DrawMiniCloud(fb, width, cx, cy - 2, 10, WHITE, BLACK);
+            break;
+        case WeatherIcon::Rain:
+            DrawMiniCloud(fb, width, cx, cy - 6, 8, BLACK, BLACK);
+            for (int i = -1; i <= 1; ++i) {
+                const int x = cx + i * 9;
+                DrawLine(fb, width, {x, cy + 8}, {x - 3, cy + 15}, RED);
+                DrawLine(fb, width, {x + 1, cy + 8}, {x - 2, cy + 15}, RED);
+            }
+            break;
+        case WeatherIcon::Snow:
+            DrawMiniCloud(fb, width, cx, cy - 6, 8, BLACK, BLACK);
+            for (int i = -1; i <= 1; ++i) {
+                DrawCircleBorder(fb, width, {cx + i * 9, cy + 12}, 3, 2, BLACK);
+            }
+            break;
+        case WeatherIcon::Fog:
+            DrawMiniCloud(fb, width, cx, cy - 6, 8, WHITE, BLACK);
+            DrawRect(fb, width, {cx - 12, cy + 8, 24, 2}, BLACK);
+            DrawRect(fb, width, {cx - 12, cy + 13, 24, 2}, BLACK);
+            break;
+        case WeatherIcon::Unknown:
+        default:
+            DrawCircleBorder(fb, width, {cx, cy}, 9, 2, BLACK);
+            break;
+    }
+}
+
 // Small glyphs (weather_icons_16 font) for the tomorrow strip
 const char* SmallGlyphFor(WeatherIcon icon) {
     switch (icon) {
@@ -241,8 +328,8 @@ std::string UpperAscii(const std::string& in) {
 WeatherRenderer::WeatherRenderer()
     : has_data_(false)
     , page_index_(0)
-    , font_(&SourceHanSansSC_Regular_slim)
-    , title_font_(&SourceHanSansSC_Medium_slim) {
+    , font_(&latin_ui_16)
+    , title_font_(&latin_ui_24) {
 }
 
 WeatherRenderer::~WeatherRenderer() {}
@@ -293,39 +380,107 @@ void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
     const int rule_y = header_y + 28;
     DrawRect(fb, width, {0, rule_y, width, 3}, BLACK);
 
-    // ---- Hero: big temperature + condition left, icon right ----
-    const int hero_y = rule_y + 26;
+    // ---- Hero: temperature + condition + H/L + feels-like left, icon right ----
+    // Digits shrunk vs v1 (76 -> 56 px) to make room for the TODAY band.
+    const int hero_y = rule_y + 12;
+    const DigitMetrics hero_digits{32, 56, 8, 8};
     const Color temp_color = (current_data_.temp_int < 0) ? RED : BLACK;
-    DrawSegTemperature(fb, width, 22, hero_y, current_data_.temp_int, temp_color);
+    DrawSegTemperature(fb, width, 22, hero_y, current_data_.temp_int, temp_color, hero_digits);
 
+    const int text_x = 24;
     const std::string& cond = current_data_.weather_text;
     if (!cond.empty()) {
-        DrawText(fb, width, 24, InkCenteredTextTopY(font_, cond.c_str(), hero_y + 76 + 22, 0),
+        DrawText(fb, width, text_x,
+                 InkCenteredTextTopY(font_, cond.c_str(), hero_y + 56 + 12, 0),
                  cond.c_str(), font_, BLACK);
+    }
+
+    // Today's high/low (forecast[0] when it is "Today")
+    const WeatherForecastDay* today_fc = nullptr;
+    const WeatherForecastDay* tomorrow = nullptr;
+    for (const auto& day : current_data_.forecast) {
+        if (day.label == "Today") today_fc = &day;
+        if (day.label == "Tomorrow") tomorrow = &day;
+    }
+    if (today_fc) {
+        char range[40];
+        snprintf(range, sizeof(range), "H %d\xC2\xB0 / L %d\xC2\xB0",
+                 (int)today_fc->temp_max, (int)today_fc->temp_min);
+        DrawText(fb, width, text_x, InkCenteredTextTopY(title_font_, range, hero_y + 89, 0),
+                 range, title_font_, BLACK);
+    }
+
+    // Feels-like: non-empty only when it differs >= 2° from the actual temp
+    if (!current_data_.feels_like.empty()) {
+        const char* label = "Feels like ";
+        const int feels_cy = hero_y + 109;
+        DrawText(fb, width, text_x, InkCenteredTextTopY(font_, label, feels_cy, 0),
+                 label, font_, BLACK);
+        char feels_buf[16];
+        snprintf(feels_buf, sizeof(feels_buf), "%s\xC2\xB0", current_data_.feels_like.c_str());
+        const Color feels_color = (atoi(current_data_.feels_like.c_str()) < 0) ? RED : BLACK;
+        DrawText(fb, width, text_x + MeasureTextWidth(label, font_),
+                 InkCenteredTextTopY(title_font_, feels_buf, feels_cy, 0),
+                 feels_buf, title_font_, feels_color);
     }
 
     WeatherIcon now_icon = ParseWeatherIcon(current_data_.weather_icon.c_str());
     if (now_icon == WeatherIcon::Unknown) {
         now_icon = ParseWeatherIcon(current_data_.weather_text.c_str());
     }
-    DrawHeroIcon(fb, width, now_icon, width - 84, hero_y + 46);
+    DrawHeroIcon(fb, width, now_icon, width - 84, hero_y + 52);
 
-    // ---- Tomorrow strip: inverted band ----
-    const WeatherForecastDay* tomorrow = nullptr;
-    for (const auto& day : current_data_.forecast) {
-        if (day.label == "Tomorrow") { tomorrow = &day; break; }
+    // ---- TODAY band: 4 rolling slots (+2/+4/+6/+8 h; hourly[0] = +1 h) ----
+    const int band_top = 170;
+    const int strip_h = 40;
+    const Rect strip{0, height - strip_h, width, strip_h};
+    const int band_bottom = strip.y;
+
+    const auto& hourly = current_data_.hourly;
+    int picks[4] = {-1, -1, -1, -1};
+    const int n = (int)hourly.size();
+    if (n >= 8) {
+        picks[0] = 1; picks[1] = 3; picks[2] = 5; picks[3] = 7;
+    } else if (n >= 4) {
+        // degraded data: spread what we have across the four slots
+        picks[0] = 0; picks[1] = n / 3; picks[2] = (2 * n) / 3; picks[3] = n - 1;
     }
 
-    const int strip_h = 52;
-    const int footer_h = 26;
-    const Rect strip{0, height - footer_h - strip_h, width, strip_h};
+    if (picks[0] >= 0) {
+        DrawRect(fb, width, {0, band_top, width, 2}, BLACK);
+        const int slot_w = width / 4;
+        for (int i = 1; i < 4; ++i) {
+            DrawVLine(fb, width, i * slot_w, band_top + 4, band_bottom - 4, BLACK);
+        }
+        for (int i = 0; i < 4; ++i) {
+            const WeatherHourly& h = hourly[picks[i]];
+            const int cx = i * slot_w + slot_w / 2;
+
+            char hh[8];
+            snprintf(hh, sizeof(hh), "%02d", h.hour_local);
+            int hh_w = MeasureTextWidth(hh, font_);
+            DrawText(fb, width, cx - hh_w / 2, InkCenteredTextTopY(font_, hh, band_top + 13, 0),
+                     hh, font_, BLACK);
+
+            DrawMiniIcon(fb, width, ParseWeatherIcon(h.icon_code.c_str()), cx, band_top + 44);
+
+            char st[16];
+            snprintf(st, sizeof(st), "%d\xC2\xB0", (int)h.temp);
+            int st_w = MeasureTextWidth(st, title_font_);
+            DrawText(fb, width, cx - st_w / 2,
+                     InkCenteredTextTopY(title_font_, st, band_top + 76, 0),
+                     st, title_font_, (h.temp < 0) ? RED : BLACK);
+        }
+    }
+
+    // ---- Tomorrow strip: inverted band, flush to the bottom edge ----
     DrawRect(fb, width, strip, BLACK);
 
     if (tomorrow) {
         // yellow tag
         const char* tag = "TOMORROW";
         int tag_w = MeasureTextWidth(tag, font_);
-        const Rect tag_box{12, strip.y + (strip_h - 28) / 2, tag_w + 12, 28};
+        const Rect tag_box{12, strip.y + (strip_h - 24) / 2, tag_w + 12, 24};
         DrawRect(fb, width, tag_box, YELLOW);
         DrawText(fb, width, tag_box.x + 6,
                  InkCenteredTextTopY(font_, tag, tag_box.y + tag_box.h / 2, 0), tag, font_, BLACK);
@@ -367,19 +522,6 @@ void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
         const char* na = "No forecast for tomorrow";
         DrawText(fb, width, 14, InkCenteredTextTopY(font_, na, strip.y + strip_h / 2, 0),
                  na, font_, WHITE);
-    }
-
-    // ---- Footer: attribution (MET Norway CC BY 4.0) + timestamp ----
-    const int footer_center = height - footer_h / 2;
-    const char* attribution = "Data: MET Norway";
-    DrawText(fb, width, 14, InkCenteredTextTopY(font_, attribution, footer_center, 0),
-             attribution, font_, BLACK);
-    if (!current_data_.update_time.empty()) {
-        char updated[24];
-        snprintf(updated, sizeof(updated), "Updated %s", current_data_.update_time.c_str());
-        int w = MeasureTextWidth(updated, font_);
-        DrawText(fb, width, width - 14 - w, InkCenteredTextTopY(font_, updated, footer_center, 0),
-                 updated, font_, BLACK);
     }
 
     needs_full_refresh_ = false;

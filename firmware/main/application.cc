@@ -5,6 +5,9 @@
 #include "board.h"
 #include "common/data_source.h"
 #include "common/photo_storage.h"
+#include <algorithm>
+
+#include "common/makeplans_api.h"
 #include "common/weather_api.h"
 #include "ui/page_config.h"
 #include "display.h"
@@ -89,12 +92,14 @@ void StartSntpClockSyncOnce() {
     static bool s_started = false;
     if (s_started) return;
 
-    setenv("TZ", "CST-8", 1);
+    // UTC: nothing on-screen shows device-local wall time, and the door sign
+    // compares UTC epochs against feed timestamps that carry their own offsets.
+    setenv("TZ", "UTC0", 1);
     tzset();
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "ntp.aliyun.com");
-    esp_sntp_setservername(1, "cn.pool.ntp.org");
-    esp_sntp_setservername(2, "pool.ntp.org");
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(1, "time.cloudflare.com");
+    esp_sntp_setservername(2, "time.google.com");
     esp_sntp_set_time_sync_notification_cb([](struct timeval*) {
         time_t now = 0;
         time(&now);
@@ -107,7 +112,7 @@ void StartSntpClockSyncOnce() {
     });
     esp_sntp_init();
     s_started = true;
-    ESP_LOGI(kTag, "SNTP started: tz=Asia/Shanghai servers=ntp.aliyun.com,cn.pool.ntp.org,pool.ntp.org");
+    ESP_LOGI(kTag, "SNTP started: tz=UTC servers=pool.ntp.org,time.cloudflare.com,time.google.com");
 }
 
 bool IsLocalHttpServiceRunning(const ui::RawDrawUiManager* manager) {
@@ -316,6 +321,11 @@ void Application::Initialize() {
                             UpdateHttpServerSettingsItem(sr, started, started ? ip : "");
                             UpdateLanIpSettingsItem(sr, ip);
                         }
+                        if (started) {
+                            if (auto* mr = rawdraw_ui_manager_->GetMakePlansRenderer()) {
+                                mr->SetLanUrl("http://" + ip + "/makeplans");
+                            }
+                        }
                     }
                 }
                 if (rawdraw_ui_manager_ &&
@@ -336,6 +346,17 @@ void Application::Initialize() {
                         }
                         if (rawdraw_ui_manager_->GetCurrentPage() == ui::RawDrawPageId::Weather) {
                             rawdraw_ui_manager_->RequestFullRefresh();
+                        }
+                    });
+                }
+                if (!makeplans_api_is_ready()) {
+                    makeplans_api_init([this](const MakePlansSchedule& schedule) {
+                        if (!rawdraw_ui_manager_) return;
+                        if (auto* mr = rawdraw_ui_manager_->GetMakePlansRenderer()) {
+                            mr->Update(schedule);
+                        }
+                        if (rawdraw_ui_manager_->GetCurrentPage() == ui::RawDrawPageId::MakePlans) {
+                            rawdraw_ui_manager_->RequestActivePageRefresh();
                         }
                     });
                 }
@@ -581,8 +602,12 @@ void Application::EnterScheduledSleep() {
     if (on_battery) {
         // Self-wake at the fastest cadence any enabled data source wants, so
         // e.g. a 10-min transit source shortens the sleep automatically.
-        const int wake_minutes =
+        int wake_minutes =
             data_sources_min_interval_minutes((int)kBatterySleepIntervalMinutes);
+        // Door sign: wake at the next booking boundary if that comes sooner,
+        // so the panel flips on time instead of up to a poll interval late.
+        wake_minutes = std::min(wake_minutes,
+                                makeplans_minutes_to_next_boundary(wake_minutes));
         esp_sleep_enable_timer_wakeup(wake_minutes * 60LL * 1000 * 1000);
         ESP_LOGI(kTag, "Entering deep sleep; timer wake in %d min, BOOT wakes sooner",
                  wake_minutes);

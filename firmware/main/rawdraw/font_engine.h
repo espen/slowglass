@@ -63,6 +63,11 @@ typedef struct _lv_font_t {
     bool (*get_glyph_dsc)(const struct _lv_font_t * font, lv_font_glyph_dsc_t * dsc_out,
                           uint32_t letter, uint32_t letter_next);
     const void * (*get_glyph_bitmap)(lv_font_glyph_dsc_t * g_dsc, struct _lv_draw_buf_t * draw_buf);
+    /* MUST match LVGL v9.3's lv_font_t exactly: font objects are compiled
+     * against the real header, so a missing member here shifts every later
+     * field (dsc/fallback/user_data) by 4 bytes in shim-compiled TUs. That
+     * made ->fallback read ->dsc and crash the first time it was used. */
+    void (*release_glyph)(const struct _lv_font_t * font, lv_font_glyph_dsc_t * g_dsc);
     int32_t line_height;
     int32_t base_line;
     uint8_t subpx : 2;
@@ -102,6 +107,22 @@ static inline const void* lv_font_get_glyph_bitmap(lv_font_glyph_dsc_t* g_dsc,
 #ifndef FONT_DECLARE
 #define FONT_DECLARE LV_FONT_DECLARE
 #endif
+
+// ============================================================
+// Glyph lookup that follows the font's fallback chain. The fmt_txt
+// lookup never consults ->fallback on its own, so missing glyphs
+// (e.g. æøå — the CJK-subset main fonts carry no Latin-1) would
+// otherwise be dropped. resolved_font is set to whichever font in
+// the chain supplied the glyph, so the bitmap fetch stays correct.
+// ============================================================
+static inline bool font_get_glyph_dsc_fb(const lv_font_t* font, lv_font_glyph_dsc_t* dsc_out,
+                                         uint32_t letter) {
+    for (const lv_font_t* f = font; f != NULL; f = f->fallback) {
+        dsc_out->resolved_font = f;
+        if (lv_font_get_glyph_dsc(f, dsc_out, letter, 0)) return true;
+    }
+    return false;
+}
 
 // ============================================================
 // UTF-8 Decoder (always provided — not in LVGL's public API)

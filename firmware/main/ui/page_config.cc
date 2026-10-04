@@ -38,6 +38,7 @@ constexpr NamedPage kNamedPages[] = {
     {"lifebar", RawDrawPageId::LifeBar},
     {"yearprogress", RawDrawPageId::YearProgress},
     {"log", RawDrawPageId::Log},
+    {"doorsign", RawDrawPageId::MakePlans},
 };
 
 std::vector<std::string> SplitCsv(const std::string& csv) {

@@ -96,6 +96,8 @@ private:
     static esp_err_t StatusHandler(httpd_req_t* req);
     static esp_err_t SettingsHandler(httpd_req_t* req);
     static esp_err_t PagesConfigHandler(httpd_req_t* req);
+    static esp_err_t MakePlansConfigHandler(httpd_req_t* req);
+    static esp_err_t MakePlansPageHandler(httpd_req_t* req);
     static esp_err_t PhotosHandler(httpd_req_t* req);
     static esp_err_t PhotoHandler(httpd_req_t* req);
     static esp_err_t PhotoMetaHandler(httpd_req_t* req);

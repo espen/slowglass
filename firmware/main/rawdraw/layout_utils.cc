@@ -35,8 +35,7 @@ TextInkBounds MeasureTextInkBounds(const lv_font_t* font, const char* text) {
         if (ch == '\n') continue;
 
         lv_font_glyph_dsc_t g = {};
-        g.resolved_font = font;
-        if (!lv_font_get_glyph_dsc(font, &g, ch, 0)) continue;
+        if (!font_get_glyph_dsc_fb(font, &g, ch)) continue;
         if (g.box_h == 0) continue;
 
         const int gy = static_cast<int>(font->line_height) -

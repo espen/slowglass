@@ -7,6 +7,7 @@
  */
 
 #include "rawdraw.h"
+#include <esp_log.h>
 #include <cstring>
 #include <algorithm>
 #include <atomic>
@@ -363,12 +364,10 @@ void DrawText(uint8_t* fb, int width, int x, int y, const char* text,
             continue;
         }
 
-        // Get glyph descriptor (LVGL v9 API)
-        // NOTE: lv_font_get_glyph_dsc_fmt_txt does NOT set resolved_font,
-        // so we must set it ourselves before calling.
+        // Get glyph descriptor (LVGL v9 API), following the fallback chain.
+        // font_get_glyph_dsc_fb sets resolved_font to the supplying font.
         lv_font_glyph_dsc_t g = {};
-        g.resolved_font = font;
-        if (!lv_font_get_glyph_dsc(font, &g, ch, 0)) {
+        if (!font_get_glyph_dsc_fb(font, &g, ch)) {
             // Glyph not found, skip
             cursor_x += font->line_height / 2;
             continue;
@@ -382,6 +381,15 @@ void DrawText(uint8_t* fb, int width, int x, int y, const char* text,
 
         if (!bitmap) {
             cursor_x += g.adv_w;
+            continue;
+        }
+
+        // Sanity clamp: a corrupt/mismatched glyph descriptor must never be
+        // able to wedge the UI task in a near-endless blit loop.
+        if ((int)g.box_w > 128 || (int)g.box_h > 128 || (int)g.adv_w > 128) {
+            ESP_LOGW("rawdraw", "Skipping bogus glyph U+%04X (box %dx%d adv %d)",
+                     (unsigned)ch, (int)g.box_w, (int)g.box_h, (int)g.adv_w);
+            cursor_x += font->line_height / 2;
             continue;
         }
 
@@ -490,7 +498,7 @@ int MeasureTextWidth(const char* text, const lv_font_t* font) {
         }
 
         lv_font_glyph_dsc_t g = {};
-        if (lv_font_get_glyph_dsc(font, &g, ch, 0)) {
+        if (font_get_glyph_dsc_fb(font, &g, ch)) {
             width += g.adv_w;
         } else {
             width += font->line_height / 2;  // Unknown char placeholder
@@ -525,7 +533,7 @@ Rect MeasureTextBounds(const char* text, const lv_font_t* font, int max_width) {
 
         lv_font_glyph_dsc_t g = {};
         int char_w = 0;
-        if (lv_font_get_glyph_dsc(font, &g, ch, 0)) {
+        if (font_get_glyph_dsc_fb(font, &g, ch)) {
             char_w = g.adv_w;
         } else {
             char_w = font->line_height / 2;  // Unknown char placeholder

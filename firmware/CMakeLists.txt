@@ -11,6 +11,9 @@ list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/main/components")
 
 # Add this line to disable the specific warning
 add_compile_options(-Wno-missing-field-initializers)
+# managed esp_lcd_st7701 has an ESP_LOGD-after-free that only compiles at
+# DEBUG log level; keep it a warning so debug builds link
+add_compile_options(-Wno-error=use-after-free)
 add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_CURRENT_LIST_DIR}/compat/cxx_math_compat.h>")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

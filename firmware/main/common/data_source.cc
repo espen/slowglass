@@ -105,34 +105,35 @@ int data_sources_min_interval_minutes(int fallback_minutes) {
 }
 
 void data_sources_start() {
-    if (s_started) {
-        // Network came back: refresh everything that is enabled.
-        for (auto* e : Registry()) {
-            if (data_source_interval_minutes(e->def.name) > 0) StartFetch(e);
-        }
-        return;
-    }
+    // Idempotent: on re-call (network back, or a source registered after the
+    // first start, e.g. MakePlans pairing completing mid-session) this arms
+    // timers that are still missing and refreshes everything enabled.
+    const bool first_start = !s_started;
     s_started = true;
 
     for (auto* e : Registry()) {
         const int minutes = data_source_interval_minutes(e->def.name);
         if (minutes <= 0) {
-            ESP_LOGI(kTag, "Data source '%s' disabled by config", e->def.name);
+            if (first_start) {
+                ESP_LOGI(kTag, "Data source '%s' disabled by config", e->def.name);
+            }
             continue;
         }
-        esp_timer_create_args_t args = {};
-        args.callback = [](void* arg) { StartFetch(static_cast<Entry*>(arg)); };
-        args.arg = e;
-        args.dispatch_method = ESP_TIMER_TASK;
-        args.name = e->def.name;
-        args.skip_unhandled_events = true;
-        if (esp_timer_create(&args, &e->timer) == ESP_OK) {
-            esp_timer_start_periodic(e->timer, (int64_t)minutes * 60 * 1000 * 1000);
-        } else {
-            ESP_LOGE(kTag, "Failed to create timer for %s", e->def.name);
+        if (e->timer == nullptr) {
+            esp_timer_create_args_t args = {};
+            args.callback = [](void* arg) { StartFetch(static_cast<Entry*>(arg)); };
+            args.arg = e;
+            args.dispatch_method = ESP_TIMER_TASK;
+            args.name = e->def.name;
+            args.skip_unhandled_events = true;
+            if (esp_timer_create(&args, &e->timer) == ESP_OK) {
+                esp_timer_start_periodic(e->timer, (int64_t)minutes * 60 * 1000 * 1000);
+                ESP_LOGI(kTag, "Started '%s' (every %d min)", e->def.name, minutes);
+            } else {
+                ESP_LOGE(kTag, "Failed to create timer for %s", e->def.name);
+            }
         }
         StartFetch(e);
-        ESP_LOGI(kTag, "Started '%s' (every %d min)", e->def.name, minutes);
     }
 }
 

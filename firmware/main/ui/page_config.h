@@ -10,7 +10,7 @@
  *               treated as enabled.
  *
  * Recognized names: weather, gallery, settings, chat, ebook, news, calendar,
- * almanac, lifebar, yearprogress, log.
+ * almanac, lifebar, yearprogress, log, doorsign.
  */
 
 #ifndef UI_PAGE_CONFIG_H

@@ -214,6 +214,7 @@ const char* RawDrawUiManager::GetPageTitle(RawDrawPageId page) {
         case RawDrawPageId::FontDebug:  return "Font Debug";
         case RawDrawPageId::FontMetrics: return "Font Metrics";
         case RawDrawPageId::APTransfer: return "Image Transfer";
+        case RawDrawPageId::MakePlans: return "Door Sign";
         default:               return "Unknown";
     }
 }
@@ -249,6 +250,7 @@ RawDrawUiManager::RawDrawUiManager()
     calendar_renderer_ = std::make_unique<rawdraw::CalendarRenderer>();
     font_debug_renderer_ = std::make_unique<rawdraw::FontDebugRenderer>();
     font_metrics_renderer_ = std::make_unique<rawdraw::FontMetricsRenderer>();
+    makeplans_renderer_ = std::make_unique<rawdraw::MakePlansRenderer>();
     ap_transfer_renderer_ = std::make_unique<rawdraw::ApTransferRenderer>();
     ap_transfer_server_ = std::make_unique<rawdraw::ApTransferServer>();
     ap_transfer_server_->SetStateCallback(
@@ -555,6 +557,7 @@ rawdraw::PageRenderer* RawDrawUiManager::GetRendererForPage(RawDrawPageId page) 
         case RawDrawPageId::FontDebug:  return font_debug_renderer_.get();
         case RawDrawPageId::FontMetrics: return font_metrics_renderer_.get();
         case RawDrawPageId::APTransfer: return ap_transfer_renderer_.get();
+        case RawDrawPageId::MakePlans: return makeplans_renderer_.get();
         default:               return nullptr;
     }
 }
@@ -873,8 +876,10 @@ void RawDrawUiManager::RenderAll(uint8_t* fb, int width, int height) {
         current_page_ == RawDrawPageId::Ebook &&
         ebook_renderer_ &&
         ebook_renderer_->IsPortraitReader();
-    // Weather is a full-bleed dashboard with its own header — no status bar.
-    const bool chrome_free_page = (current_page_ == RawDrawPageId::Weather);
+    // Weather and the door sign are full-bleed dashboards with their own
+    // headers — no status bar.
+    const bool chrome_free_page = (current_page_ == RawDrawPageId::Weather ||
+                                   current_page_ == RawDrawPageId::MakePlans);
 
     // Update central_text based on current page state
     status_bar_data_.central_text.clear();

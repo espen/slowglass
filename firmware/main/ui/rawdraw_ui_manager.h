@@ -29,6 +29,7 @@
 #include "ui/renderers/rawdraw/font_debug_renderer.h"
 #include "ui/renderers/rawdraw/font_metrics_renderer.h"
 #include "ui/renderers/rawdraw/calendar_renderer.h"
+#include "ui/renderers/rawdraw/makeplans_renderer.h"
 #include "ui/renderers/rawdraw/ap_transfer_renderer.h"
 #include "ui/renderers/rawdraw/ap_transfer_server.h"
 #include "rawdraw/rawdraw.h"
@@ -76,6 +77,7 @@ enum class RawDrawPageId {
     FontDebug = 15,
     FontMetrics = 16,
     APTransfer = 17,
+    MakePlans = 18,
     Count,
 };
 
@@ -339,6 +341,7 @@ public:
     rawdraw::FontDebugRenderer* GetFontDebugRenderer() { return font_debug_renderer_.get(); }
     rawdraw::FontMetricsRenderer* GetFontMetricsRenderer() { return font_metrics_renderer_.get(); }
     rawdraw::ApTransferRenderer* GetApTransferRenderer() { return ap_transfer_renderer_.get(); }
+    rawdraw::MakePlansRenderer* GetMakePlansRenderer() { return makeplans_renderer_.get(); }
 
     // ============================================================
     // Display dimensions
@@ -449,6 +452,7 @@ private:
     std::unique_ptr<rawdraw::CalendarRenderer> calendar_renderer_;
     std::unique_ptr<rawdraw::FontDebugRenderer> font_debug_renderer_;
     std::unique_ptr<rawdraw::FontMetricsRenderer> font_metrics_renderer_;
+    std::unique_ptr<rawdraw::MakePlansRenderer> makeplans_renderer_;
     std::unique_ptr<rawdraw::ApTransferRenderer> ap_transfer_renderer_;
     std::unique_ptr<rawdraw::ApTransferServer> ap_transfer_server_;
 

@@ -41,11 +41,23 @@ struct WeatherForecastDay {
     int32_t temp_max = 0;
 };
 
+/**
+ * @brief One hourly forecast entry (timeseries entries after "now")
+ */
+struct WeatherHourly {
+    int hour_local = 0;       // Local hour of day, 0-23
+    int32_t temp = 0;         // Rounded air temperature
+    std::string icon_code;    // MET Norway symbol_code
+    float precip_mm = 0.0f;   // Precipitation for the hour (next_1_hours)
+};
+
 struct WeatherData {
     std::string city;         // Resolved city name (e.g. "Oslo", "New York")
     std::string date_string;  // Local date (e.g. "Sun 27 Sep")
     std::string temp;         // Current temperature (e.g. "14")
-    std::string feels_like;   // Unused with MET Norway; kept for compatibility
+    std::string feels_like;   // Perceived temp (wind chill / heat index), rounded.
+                              // Empty when it differs from temp by < 2° — the
+                              // renderer shows the line only when non-empty.
     std::string weather_icon; // symbol_code for current weather (e.g. "clearsky_day")
     std::string weather_text; // Condition in English (e.g. "Clear sky")
     std::string wind_dir;     // Wind direction (e.g. "SW")
@@ -56,6 +68,7 @@ struct WeatherData {
     int32_t air_aqi = -1;
     int32_t temp_int = 0;     // Numeric temperature for icon/color selection
     std::vector<WeatherForecastDay> forecast; // [0]=Today, [1]=Tomorrow
+    std::vector<WeatherHourly> hourly;        // Next ~12 h; [0] = +1 h, hourly steps
 };
 
 /**
