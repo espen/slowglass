@@ -34,8 +34,8 @@
 static const char* kTag = "WeatherApi";
 
 // MET Norway ToS requires an identifying User-Agent with contact info.
-// Replace with YOUR repo URL or contact before deploying — generic UAs may
-// be throttled (https://api.met.no/doc/TermsOfService).
+// Forks: replace the URL with your own repo or contact — shared/generic UAs
+// may be throttled (https://api.met.no/doc/TermsOfService).
 static const char* kUserAgent = "slowglass/0.1 (https://github.com/espen/slowglass)";
 
 // Fallback location: New York City
