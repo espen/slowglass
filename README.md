@@ -1,199 +1,124 @@
-# Youn Ink Four Color
+# Slowglass
 
-This is a personal AI assistant project for ESP32-S3 e-paper devices. The current mainline consists of three parts: the ESP32 firmware, a Python backend service, and a management UI for images/todos/devices.
+Firmware for a slow-refresh, four-color e-paper dashboard — a quiet pane of
+glass that shows you the day: weather, your meeting room's schedule, a
+calendar, a photo. Named after Bob Shaw's *slow glass*, the sci-fi material
+light takes years to pass through, so that looking at it means looking into
+another time and place.
 
-The focus of the project is not a general-purpose npm package but a system that actually runs on e-paper hardware: voice conversations, TTS playback, todo sync, weather/news/calendar/ebook/gallery pages, image transfer over AP mode, OTA firmware management, and a RawDraw UI adapted to four-color panels.
+Runs on the ZecTrix ESP32-S3 4.2" e-paper devkit (400×300 BWRY panel —
+black, white, red, yellow — SSD2683 driver), rendering straight to a raw
+framebuffer with no LVGL.
 
-## The 2BP four-color image pipeline
+## Widgets
 
-![Youn Ink Four Color 2BP BWRY architecture](README-2bp-architecture.png)
+The firmware is a **widget platform**: each feature lives in its own
+directory under `firmware/main/widgets/` and plugs into the system through a
+small registry. You choose which widgets a build contains.
 
-Gallery images enter the server either from the PC/NAS management UI or from the device's AP-mode page, get converted to `2BP BWRY` (black, white, red, yellow), and are pushed to the ESP32-S3 four-color e-paper panel over Wi-Fi. The 2BP four-color pipeline in this repository is maintained independently from the NOTE4's 4BP black/white grayscale gallery: the panel colors, pixel format, and refresh driver all differ.
+| Widget | What it shows |
+| --- | --- |
+| `weather` | Full-bleed MET Norway forecast dashboard + hourly detail page |
+| `makeplans` | Door sign for a [MakePlans](https://www.makeplans.com) room: today's bookings, occupancy, NFC booking tag |
+| `calendar` | Monthly calendar grid |
+| `news` | News page |
+| `almanac` | Almanac page |
+| `lifebar` | Life-progress bar |
+| `yearprogress` | Year progress |
+| `ebook` | Plain-text ebook reader |
 
-## Current status
+Core pages (always built in): photo gallery + AP image transfer, settings,
+WiFi status, chat, log.
 
-- The backend has been switched to the Python service under `server/`; the old Node `scripts/` in the repo root has been removed.
-- The firmware's main UI is rendered with RawDraw, designed for the four-color panel by default while keeping 1bpp black/white panel compatibility.
-- Theming currently keeps a single default visual direction: a Nintendo-flavored four-color theme emphasizing semantic use of red, yellow, black, and white.
-- Image transfer supports both 1bpp black/white and 2bpp four-color BWRY formats.
-- The root `.gitignore` excludes build artifacts, logs, pid files, databases, local config, and key files.
+### Pick widgets at flash time
 
-## Directory layout
-
-```text
-.
-├── firmware/        ESP-IDF firmware: RawDraw UI, page rendering, panel driver, AP image transfer
-├── server/          Python backend: WebSocket conversations, TTS, discovery, image push, OTA API
-├── frontend/        Management frontend source, with its own package/pnpm workflow
-├── docs/            Historical design documents and implementation notes
-├── documents/       Project materials
-└── package.json     Repo-level helper commands only; no longer the entry point of the old Node service
-```
-
-Note: `firmware/scripts/` and `frontend/scripts/` are still in use — they belong to the firmware and frontend tooling respectively. What was removed is the legacy `scripts/` in the repo root.
-
-## Backend service
-
-The backend entry point is `server/llmserve.py`, best managed through `server/start.sh`. Default ports:
-
-| Port | Protocol | Purpose |
-| --- | --- | --- |
-| `9001` | WebSocket | ESP32 voice, LLM, TTS, sync messages |
-| `8766` | UDP | Device discovery |
-| `8766` | HTTP | Image push, device image management, OTA API |
-| `8090` | HTTP | Standalone management service, optional |
-
-### Install dependencies
+`idf.py menuconfig` → *Xiaozhi Assistant → Widgets* — one checkbox per
+widget. A disabled widget's code, pages, HTTP endpoints, data source, and
+battery wakeups drop out of the image entirely. For a single-purpose device
+there are preset files, e.g. a door-sign-only image:
 
 ```bash
-cd server
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+idf.py -B build_doorsign -DSDKCONFIG=sdkconfig.doorsign \
+  -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.defaults.doorsign" build
 ```
 
-### Start the service
+### Write your own
 
-```bash
-export DASHSCOPE_API_KEY=your_Alibaba_Bailian_API_key
-cd server
-./start.sh start
-```
+A widget is one directory: a renderer drawing into the 1bpp framebuffer, an
+optional data fetcher, optional HTTP endpoints, and a `WidgetDef` that ties
+them together. Widgets never include board or application headers
+(`firmware/scripts/check_widget_deps.sh` enforces it), so they can be moved
+to other firmwares by copying the directory.
 
-Common commands:
+- [docs/adding-a-widget.md](docs/adding-a-widget.md) — the checklist
+- [docs/porting-a-widget.md](docs/porting-a-widget.md) — taking a widget elsewhere
 
-```bash
-cd server
-./start.sh status
-./start.sh logs
-./start.sh restart
-./start.sh stop
-```
+## Getting started
 
-They can also be invoked from the repo root:
-
-```bash
-npm run server:start
-npm run server:status
-npm run server:logs
-```
-
-### Simulate a device locally
-
-```bash
-cd server
-python3 mock_client.py --server ws://127.0.0.1:9001
-```
-
-## Image and device management
-
-The image HTTP API is served by `server/push_image.py` on port `8766`. It supports:
-
-- Uploading an image file, converting it, and pushing it to the device.
-- Choosing the `1bpp` black/white format or the `2bpp` four-color BWRY format.
-- Listing the images on a device.
-- Deleting images from a device.
-- Uploading firmware and serving it for OTA download.
-
-Common endpoints:
-
-```bash
-curl http://localhost:8766/api/status
-curl http://localhost:8766/api/images
-```
-
-Image upload example:
-
-```bash
-curl -X POST http://localhost:8766/api/upload_image \
-  -F "image=@/path/to/photo.jpg" \
-  -F "format=bwry2bpp" \
-  -F "title=Photo title"
-```
-
-Once the device enters AP image-transfer mode, connect your phone to the device hotspot and open:
-
-```text
-http://192.168.4.1
-```
-
-## Firmware
-
-The firmware lives in `firmware/` and is based on ESP-IDF. It targets the ZecTrix ESP32-S3 4.2-inch e-paper board by default, supporting the four-color BWRY panel while keeping a 1bpp black/white panel configuration.
-
-### Build
+Requires [ESP-IDF](https://docs.espressif.com/projects/esp-idf/) ≥ 6.0 with
+the ESP32-S3 toolchain.
 
 ```bash
 cd firmware
-source ~/Documents/esp/v6.0/esp-idf/export.sh
+source $IDF_PATH/export.sh
 idf.py build
+idf.py -p /dev/ttyACM0 flash   # your serial port may differ
 ```
 
-Repo-root helper command:
+First boot opens a WiFi setup hotspot (captive portal at `192.168.4.1`).
+After connecting, the device fetches data on its own schedule; on USB power
+it also starts a LAN web server for configuration.
 
-```bash
-npm run firmware:build
-```
+### Device web UI (LAN, USB power)
 
-### Panel configuration
+| URL | Purpose |
+| --- | --- |
+| `/` | Photo upload and gallery management |
+| `/weather` | Weather location override (lat/lon/city — IP geolocation is wrong behind a VPN) |
+| `/makeplans` | Door-sign pairing with a MakePlans room display code |
+| `/api/pages` | GET/POST home page, enabled pages, data-source intervals |
+| `/api/weather`, `/api/makeplans` | The JSON APIs behind the pages above |
 
-The firmware Kconfig offers a panel type selection:
+Which page the device boots into is runtime config, not a build:
+`curl -X POST http://<device>/api/pages -d '{"home":"doorsign"}'`.
 
-```text
-ZECTRIX_EPD_PANEL_4COLOR_SSD2683  four-color BWRY panel
-ZECTRIX_EPD_PANEL_1BPP            black/white 1bpp panel
-```
+### Buttons
 
-To flash back onto the old black/white panel, switch to `1bpp black/white EPD` in `idf.py menuconfig` first, then rebuild and flash. The RawDraw theme layer degrades the red/yellow semantic colors into readable black/white styles.
+- **UP double-click** — quick-switch menu between enabled pages
+- **DOWN long-press** — settings; **UP long-press** — leave settings
+- **BOOT long-press** on gallery — AP image-transfer mode
+- **UP+DOWN long-press** — WiFi setup hotspot
 
-## UI notes
+### Power
 
-The firmware UI is built on the RawDraw component system. Key pages include:
+On battery the device duty-cycles: a short awake window to fetch and
+redraw, then deep sleep. The wake interval is the fastest cadence any
+enabled data source needs, and widgets can shorten it — the door sign wakes
+exactly at booking boundaries so the panel flips on time.
 
-- Chat: shows the user's speech, recognition status, and AI replies.
-- Todo: local display, server sync, complete/delete/edit.
-- Settings: volume, brightness, theme, network, sync, OTA, and more.
-- Gallery: thumbnail list, full-size view, AP image-transfer entry point.
-- Weather / weather detail, news, almanac, year progress, calendar, ebook, log.
-- Quick-switch overlay: fast navigation between pages.
+## The 2BP four-color image pipeline
 
-The four-color theme layer draws components through semantic styles; avoid adding more bare `RED/YELLOW/BLACK/WHITE` in feature pages. When adding UI, prefer RawDraw components and theme tokens.
+![2BP BWRY architecture](README-2bp-architecture.png)
 
-## Environment variables
+Gallery images are converted (Floyd–Steinberg dithered) to 2-bit BWRY and
+pushed over WiFi, either from the device's own AP-mode web page or from the
+optional Python backend under `server/` (voice assistant, TTS, todo sync,
+image push, OTA — inherited from upstream; see its scripts for details).
+A 1bpp black/white panel variant remains selectable in Kconfig
+(`ZECTRIX_EPD_PANEL_1BPP`).
 
-Common backend environment variables:
+## Credits
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DASHSCOPE_API_KEY` | none | Alibaba Bailian (DashScope) API key, required to start the backend |
-| `LISTEN_HOST` | `0.0.0.0` | WebSocket listen address |
-| `LISTEN_PORT` | `9001` | WebSocket port |
-| `DISCOVERY_PORT` | `8766` | UDP discovery port |
-| `PUSH_IMAGE_PORT` | `8766` | Image/OTA HTTP API port |
-| `TTS_WS_CHUNK_BYTES` | `8000` | TTS push chunk size |
-| `TTS_WS_CHUNK_GAP_SEC` | `0.01` | Delay between TTS chunks |
+- Forked from
+  [LazyYoun/youn-ink-fourcolor-firmware](https://github.com/LazyYoun/youn-ink-fourcolor-firmware),
+  which grew out of the [xiaozhi](https://github.com/78/xiaozhi-esp32)
+  ESP32 assistant ecosystem. The gallery, chat/voice pipeline, AP transfer,
+  and panel drivers come from that lineage.
+- **Weather data from [MET Norway](https://api.met.no/)** (CC BY 4.0). If
+  you deploy this firmware, set your own contact in the User-Agent in
+  `firmware/main/widgets/weather/weather_api.cc` per their
+  [Terms of Service](https://api.met.no/doc/TermsOfService).
+- Door-sign schedule via the
+  [MakePlans room display API](https://developer.makeplans.com/guide/room-display/).
 
-Never commit `.env`, databases, logs, pid files, build directories, or firmware artifacts.
-
-## What to commit
-
-Recommended to commit:
-
-- Firmware sources such as `firmware/main/`, `firmware/components/`, `firmware/partitions/`.
-- `server/*.py`, `server/static/`, `server/requirements.txt`, `server/DEPLOY.md`.
-- Frontend sources such as `frontend/src/`, `frontend/package.json`, `frontend/pnpm-lock.yaml`.
-- The root README, documentation, and config templates.
-
-Do not commit:
-
-- `firmware/build/`
-- `firmware/managed_components/`
-- `firmware/sdkconfig`
-- `firmware/releases/`
-- `server/.env`
-- `server/todo.db`
-- `server/*.pid`
-- `server/*.log`
-- `frontend/.env*`
-- `frontend/dist/`
-- `node_modules/`
+Licensed under the [MIT License](LICENSE).
