@@ -517,12 +517,12 @@ void SettingsRenderer::Render(uint8_t* fb, int width, int height) {
         const std::string version = firmware_version_.empty() ? "Unknown" : firmware_version_;
         const std::string serial = mac_address_.empty() ? "Unknown" : mac_address_;
         const std::vector<InfoRow> rows = {
-            {"Device", "notellm"},
-            {"Model", "Youn-Beta1.0"},
+            {"Device", "Slowglass"},
             {"Firmware", version},
             {"Hardware", chip_model_.empty() ? "ESP32-S3" : chip_model_},
             {"Serial", serial},
-            {"Website", "blog.lazyyoun.xyz"},
+            {"Fork of", "youn-ink-fourcolor"},
+            {"GitHub", "espen/slowglass"},
         };
         debug_visible_row_count = static_cast<int>(rows.size());
         int y = kSettingsTableTop;
@@ -1207,7 +1207,7 @@ void SettingsRenderer::RenderAboutDialog(uint8_t* fb, int width, int height) {
     DrawRectBorder(fb, width, {dialog_x + 8, dialog_y + 8, 12, 12}, 1, accent);
     DrawLine(fb, width, {dialog_x + 10, dialog_y + 10}, {dialog_x + 18, dialog_y + 18}, accent);
     DrawLine(fb, width, {dialog_x + 18, dialog_y + 10}, {dialog_x + 10, dialog_y + 18}, accent);
-    const char* title = "About notellm";
+    const char* title = "About Slowglass";
     const int title_w = MeasureTextWidth(title, font_);
     DrawText(fb, width, dialog_x + (dialog_w - title_w) / 2,
              InkCenteredTextTopYInBox(font_, title, dialog_y, titlebar_h, 0),
@@ -1230,12 +1230,12 @@ void SettingsRenderer::RenderAboutDialog(uint8_t* fb, int width, int height) {
         std::string value;
     };
     const std::vector<InfoRow> rows = {
-        {"Device", "notellm"},
-        {"Model", "Youn-Beta1.0"},
+        {"Device", "Slowglass"},
         {"Firmware", firmware_version_.empty() ? "Unknown" : firmware_version_},
         {"Hardware", chip_model_.empty() ? "ESP32-S3" : chip_model_},
         {"Serial", mac_address_.empty() ? "Unknown" : mac_address_},
-        {"Website", "blog.lazyyoun.xyz"},
+        {"Fork of", "youn-ink-fourcolor"},
+        {"GitHub", "espen/slowglass"},
     };
     const int row_h = kAboutRowHeight;
     int y = dialog_y + titlebar_h + 12;
