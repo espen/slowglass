@@ -77,6 +77,26 @@ Most pages show a status bar across the top:
 Full-bleed pages (Weather, Door Sign, fullscreen photos, the ebook reader)
 hide the status bar.
 
+## When the screen updates
+
+E-paper only changes when something redraws it. The panel updates when:
+
+- you press a button,
+- a data source fetches on its schedule (weather, door sign) or you force
+  a fetch with BOOT long press,
+- the slideshow advances,
+- something changes via the web UI (a new photo, "show photo", settings).
+
+Between those moments the image is static — which also means the
+**status-bar clock shows the time of the last redraw**, not the current
+minute. That's deliberate: a four-color panel needs a 10+ second
+full-screen refresh even for a one-minute clock change, so the firmware
+doesn't tick the clock on its own. A frozen-looking clock is normal, not
+a hang.
+
+The brief black/white flicker during a full refresh is also normal —
+that's the panel clearing ghost images of the previous screen.
+
 ## Pages
 
 ### Weather
