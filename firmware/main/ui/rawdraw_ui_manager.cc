@@ -1291,8 +1291,15 @@ bool RawDrawUiManager::ShowPhotoById(const std::string& photo_id) {
         ESP_LOGW(kTag, "ShowPhotoById failed: id=%s not found", photo_id.c_str());
         return false;
     }
+    // Switch the page before entering fullscreen: a renderer Init during the
+    // page switch resets the gallery to memory-card mode and selection 0.
+    // Render only after the fullscreen state is set so the panel does a
+    // single refresh straight to the photo.
+    SetCurrentPageWithoutRender(RawDrawPageId::Gallery);
+    photo_gallery_renderer_->SetSelectedById(photo_id.c_str());
     photo_gallery_renderer_->EnterFullscreenMode();
-    SwitchPage(RawDrawPageId::Gallery);
+    full_refresh_pending_ = true;
+    RefreshActivePage(true);
     ESP_LOGI(kTag, "Show photo fullscreen from HTTP: id=%s", photo_id.c_str());
     return true;
 }
