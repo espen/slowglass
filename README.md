@@ -88,6 +88,10 @@ Which page the device boots into is runtime config, not a build:
 - **DOWN long-press** — settings; **UP long-press** — leave settings
 - **BOOT long-press** on gallery — AP image-transfer mode
 - **UP+DOWN long-press** — WiFi setup hotspot
+- **BOOT** — wakes the device from deep sleep
+
+Full user documentation — every page's buttons, the settings screen, the
+web UI, power behavior — in [docs/user-guide.md](docs/user-guide.md).
 
 ### Power
 
