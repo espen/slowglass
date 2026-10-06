@@ -197,7 +197,7 @@ leave. The left pane lists categories, the right pane the options:
 | Network | **LAN Server** | Start / stop the configuration web server on your home network. Needs WiFi. While it runs, the device stays awake |
 | Network | **LAN IP** | Shows the device's address on your network (read-only) |
 | Power Saving | **Sleep now** | Puts the device into deep sleep immediately. Press **BOOT** to wake |
-| About | | Firmware version, hardware, serial number |
+| About | | Device name, firmware version, hardware, serial number, and project origin (a fork of youn-ink-fourcolor) |
 
 ## The web UI
 
