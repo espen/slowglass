@@ -20,7 +20,7 @@ const char* kNamespace = "pages";
 const char* kHomeKey = "home";
 const char* kEnabledKey = "enabled";
 const char* kDefaultHome = "weather";
-const char* kDefaultEnabled = "weather,settings";
+const char* kDefaultEnabled = "weather,gallery,doorsign,settings";
 
 struct NamedPage {
     const char* name;

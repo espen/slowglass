@@ -6,8 +6,8 @@
  * build. Stored in NVS namespace "pages":
  *   "home"    — page name string (default "weather")
  *   "enabled" — comma-separated page names for the quick-switch menu
- *               (default "weather,settings"); the home page is always
- *               treated as enabled.
+ *               (default "weather,gallery,doorsign,settings"); the home page is
+ *               always treated as enabled.
  *
  * Recognized names: the core pages (gallery, settings, chat, log) plus every
  * page a compiled-in widget registers with a config name (weather, doorsign,
