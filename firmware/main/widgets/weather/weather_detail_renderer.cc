@@ -82,12 +82,12 @@ void WeatherDetailRenderer::Render(uint8_t* fb, int width, int height) {
 
         Rect metrics{238, content_top + 16, 130, 108};
         DrawStyledRoundRect(fb, width, height, metrics, Style::kBorderRadiusMD, card_style);
-        const char* labels[] = {"Feels like", "Humidity", "Visibility", "Pressure"};
+        const char* labels[] = {"Feels like", "Humidity", "Wind", "Pressure"};
         std::string values[] = {
             (data_.feels_like.empty() ? (data_.temp.empty() ? "--" : data_.temp) : data_.feels_like) + "°C",
             (data_.humidity.empty() ? "--" : data_.humidity) + "%",
-            "20km",
-            "1012hPa",
+            (data_.wind_scale.empty() ? "--" : data_.wind_scale) + "m/s",
+            (data_.pressure.empty() ? "--" : data_.pressure) + "hPa",
         };
         for (int i = 0; i < 4; ++i) {
             const int center_y = metrics.y + 20 + i * 24;
@@ -189,7 +189,17 @@ bool WeatherDetailRenderer::HandleInput(const ButtonEvent& event) {
 void WeatherDetailRenderer::Update(const WeatherData& data) {
     data_ = data;
     has_data_ = true;
-    if (hourly_.empty()) {
+    if (!data_.hourly.empty()) {
+        // Real forecast timeline; the synthetic fallback only covers the
+        // case of a fetch that produced no hourly series at all.
+        hourly_.clear();
+        for (const auto& h : data_.hourly) {
+            char label[8];
+            snprintf(label, sizeof(label), "%02d", h.hour_local);
+            hourly_.push_back({label, h.icon_code, SymbolToEnglish(h.icon_code),
+                               h.temp});
+        }
+    } else if (hourly_.empty()) {
         BuildFallbackTimeline();
     }
     selected_hour_ = std::max(0, std::min(selected_hour_, static_cast<int>(hourly_.size()) - 1));

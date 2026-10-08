@@ -86,7 +86,7 @@ WeatherIcon ParseWeatherIcon(const char* text) {
 }
 
 // English condition text from a symbol_code like "lightrainshowers_day"
-static std::string SymbolToEnglish(const std::string& symbol) {
+std::string SymbolToEnglish(const std::string& symbol) {
     // Strip _day / _night / _polartwilight variants
     std::string base = symbol;
     size_t underscore = base.find('_');
@@ -442,7 +442,7 @@ static bool ParseForecast(const char* json, WeatherData* out) {
     int64_t now_epoch = ParseIso8601Utc(cJSON_IsString(now_time) ? now_time->valuestring : nullptr);
     int64_t today = LocalDayIndex(now_epoch, s_utc_offset_sec);
 
-    double temp_now = 0, humidity = 0, wind_speed = 0, wind_dir_deg = -1;
+    double temp_now = 0, humidity = 0, wind_speed = 0, wind_dir_deg = -1, pressure_hpa = 0;
     if (!instant_detail(now_entry, "air_temperature", &temp_now)) {
         ESP_LOGE(kTag, "No current temperature in response");
         cJSON_Delete(root);
@@ -451,6 +451,7 @@ static bool ParseForecast(const char* json, WeatherData* out) {
     instant_detail(now_entry, "relative_humidity", &humidity);
     instant_detail(now_entry, "wind_speed", &wind_speed);
     instant_detail(now_entry, "wind_from_direction", &wind_dir_deg);
+    instant_detail(now_entry, "air_pressure_at_sea_level", &pressure_hpa);
 
     out->city = s_city;
     out->temp_int = (int32_t)lround(temp_now);
@@ -461,6 +462,10 @@ static bool ParseForecast(const char* json, WeatherData* out) {
     out->humidity = buf;
     snprintf(buf, sizeof(buf), "%.1f", wind_speed);
     out->wind_scale = buf;
+    if (pressure_hpa > 0) {
+        snprintf(buf, sizeof(buf), "%d", (int)lround(pressure_hpa));
+        out->pressure = buf;
+    }
     if (wind_dir_deg >= 0) {
         static const char* kDirs[] = {"N","NE","E","SE","S","SW","W","NW"};
         out->wind_dir = kDirs[((int)lround(wind_dir_deg / 45.0)) % 8];
@@ -521,6 +526,10 @@ static bool ParseForecast(const char* json, WeatherData* out) {
                 cJSON* h_det = h_n1 ? cJSON_GetObjectItem(h_n1, "details") : nullptr;
                 cJSON* h_pr = h_det ? cJSON_GetObjectItem(h_det, "precipitation_amount") : nullptr;
                 if (cJSON_IsNumber(h_pr)) h.precip_mm = (float)h_pr->valuedouble;
+                double h_wind;
+                if (instant_detail(entry, "wind_speed", &h_wind)) {
+                    h.wind_ms = (int32_t)lround(h_wind);
+                }
                 out->hourly.push_back(h);
             }
         }
@@ -586,6 +595,7 @@ static void SnapshotSave(const WeatherData& d) {
     cJSON_AddStringToObject(root, "wdir", d.wind_dir.c_str());
     cJSON_AddStringToObject(root, "wspd", d.wind_scale.c_str());
     cJSON_AddStringToObject(root, "hum", d.humidity.c_str());
+    cJSON_AddStringToObject(root, "press", d.pressure.c_str());
     cJSON_AddStringToObject(root, "ut", d.update_time.c_str());
     cJSON_AddNumberToObject(root, "ti", d.temp_int);
 
@@ -606,6 +616,7 @@ static void SnapshotSave(const WeatherData& d) {
         cJSON_AddNumberToObject(e, "e", (double)h.epoch);
         cJSON_AddNumberToObject(e, "t", h.temp);
         cJSON_AddNumberToObject(e, "p", h.precip_mm);
+        cJSON_AddNumberToObject(e, "w", h.wind_ms);
         cJSON_AddStringToObject(e, "i", h.icon_code.c_str());
         cJSON_AddItemToArray(hr, e);
     }
@@ -646,6 +657,7 @@ static bool SnapshotLoad(WeatherData* out) {
     out->wind_dir = str("wdir");
     out->wind_scale = str("wspd");
     out->humidity = str("hum");
+    out->pressure = str("press");
     out->update_time = str("ut");
     cJSON* ti = cJSON_GetObjectItem(root, "ti");
     out->temp_int = cJSON_IsNumber(ti) ? (int32_t)ti->valueint : 0;
@@ -676,11 +688,13 @@ static bool SnapshotLoad(WeatherData* out) {
         cJSON* ep = cJSON_GetObjectItem(e, "e");
         cJSON* t = cJSON_GetObjectItem(e, "t");
         cJSON* p = cJSON_GetObjectItem(e, "p");
+        cJSON* w = cJSON_GetObjectItem(e, "w");
         cJSON* i = cJSON_GetObjectItem(e, "i");
         if (cJSON_IsNumber(hh)) h.hour_local = hh->valueint;
         if (cJSON_IsNumber(ep)) h.epoch = (int64_t)ep->valuedouble;
         if (cJSON_IsNumber(t)) h.temp = (int32_t)t->valueint;
         if (cJSON_IsNumber(p)) h.precip_mm = (float)p->valuedouble;
+        if (cJSON_IsNumber(w)) h.wind_ms = (int32_t)w->valueint;
         if (cJSON_IsString(i)) h.icon_code = i->valuestring;
         out->hourly.push_back(h);
     }

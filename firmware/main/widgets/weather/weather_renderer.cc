@@ -487,6 +487,16 @@ void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
             DrawText(fb, width, cx - hh_w / 2, InkCenteredTextTopY(font_, hh, band_top + 13, 0),
                      hh, font_, BLACK);
 
+            // Strong wind is a jacket decision like rain: flag it in red
+            // beside the hour, silent below 8 m/s so calm days stay clean.
+            if (h.wind_ms >= 8) {
+                char wnd[16];
+                snprintf(wnd, sizeof(wnd), "%dm/s", (int)h.wind_ms);
+                DrawText(fb, width, cx + hh_w / 2 + 6,
+                         InkCenteredTextTopY(font_, wnd, band_top + 13, 0),
+                         wnd, font_, RED);
+            }
+
             // Icons stay centered so all four slots align; wet hours get
             // the amount in red beside the icon — the "do I bike at 15?"
             // number this strip exists for.

@@ -50,6 +50,7 @@ struct WeatherHourly {
     int32_t temp = 0;         // Rounded air temperature
     std::string icon_code;    // MET Norway symbol_code
     float precip_mm = 0.0f;   // Precipitation for the hour (next_1_hours)
+    int32_t wind_ms = 0;      // Sustained wind, rounded m/s (10 m wind)
 };
 
 struct WeatherData {
@@ -64,6 +65,7 @@ struct WeatherData {
     std::string wind_dir;     // Wind direction (e.g. "SW")
     std::string wind_scale;   // Wind speed in m/s (e.g. "3.4")
     std::string humidity;     // Relative humidity percentage (e.g. "45")
+    std::string pressure;     // Sea-level pressure in hPa (e.g. "1012")
     std::string update_time;  // Local HH:MM of the data point (e.g. "14:30")
     std::string air_quality;  // Unused with MET Norway; kept for compatibility
     int32_t air_aqi = -1;
@@ -92,6 +94,11 @@ enum class WeatherIcon {
  * @brief Map a MET Norway symbol_code (or English condition text) to an icon
  */
 WeatherIcon ParseWeatherIcon(const char* symbol_or_text);
+
+/**
+ * @brief Human-readable English condition for a MET Norway symbol_code
+ */
+std::string SymbolToEnglish(const std::string& symbol);
 
 // ============================================================
 // API interface
