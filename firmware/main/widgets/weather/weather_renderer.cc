@@ -439,8 +439,9 @@ void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
     // Anchored to render time, not the fetch, so the first slot never
     // decays into "now" between the hourly fetches (the old +2h-from-fetch
     // slot could be 25 min away by the end of a fetch cycle — weather the
-    // user already knows). +3h minimum lead; even spacing always fills
-    // all four columns.
+    // user already knows). +3h minimum lead. When a stale series (e.g. the
+    // deep-sleep snapshot) can't reach the later targets, the tail slots are
+    // padded with the latest remaining entries rather than left blank.
     const int band_top = 170;
     const int strip_h = 40;
     const Rect strip{0, height - strip_h, width, strip_h};
@@ -461,6 +462,13 @@ void WeatherRenderer::Render(uint8_t* fb, int width, int height) {
         // degraded data (unsynced clock / sparse series): spread what we have
         picks[0] = 0; picks[1] = n / 3; picks[2] = (2 * n) / 3; picks[3] = n - 1;
         pick_count = 4;
+    } else if (pick_count > 0 && pick_count < 4) {
+        // series too short for the later targets: pad with the latest
+        // entries after the last pick, keeping the slots in time order
+        for (int j = n - (4 - pick_count); j < n && pick_count < 4; ++j) {
+            if (j <= picks[pick_count - 1]) continue;
+            picks[pick_count++] = j;
+        }
     }
 
     if (pick_count > 0) {

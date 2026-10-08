@@ -69,7 +69,7 @@ struct WeatherData {
     int32_t air_aqi = -1;
     int32_t temp_int = 0;     // Numeric temperature for icon/color selection
     std::vector<WeatherForecastDay> forecast; // [0]=Today, [1]=Tomorrow
-    std::vector<WeatherHourly> hourly;        // Next ~12 h; [0] = +1 h, hourly steps
+    std::vector<WeatherHourly> hourly;        // Next ~24 h; [0] = +1 h, hourly steps
 };
 
 /**

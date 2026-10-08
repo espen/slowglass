@@ -501,10 +501,12 @@ static bool ParseForecast(const char* json, WeatherData* out) {
         int64_t epoch = ParseIso8601Utc(cJSON_IsString(t) ? t->valuestring : nullptr);
         if (epoch == 0) continue;
 
-        // --- Hourly timeline: entries after "now", next 12 h ---
+        // --- Hourly timeline: entries after "now", next 24 h ---
         // (MET keeps 1 h resolution for the first ~2 days, so these arrive
         // as consecutive hours: hourly[0] = +1 h, hourly[1] = +2 h, ...)
-        if (epoch > now_epoch && epoch <= now_epoch + 12 * 3600) {
+        // 24 h gives the dashboard's +12 h slot headroom to survive stale
+        // renders (hourly fetch cycle + the deep-sleep snapshot seeding).
+        if (epoch > now_epoch && epoch <= now_epoch + 24 * 3600) {
             double h_temp;
             if (instant_detail(entry, "air_temperature", &h_temp)) {
                 WeatherHourly h;
@@ -569,8 +571,8 @@ static bool ParseForecast(const char* json, WeatherData* out) {
 // UI startup with the previous forecast instead.
 // ============================================================
 
-// NVS strings cap at ~4000 bytes; a full snapshot (12 hourly + 2 forecast
-// entries) serializes to well under 2 KB.
+// NVS strings cap at ~4000 bytes; a full snapshot (24 hourly + 2 forecast
+// entries) serializes to roughly 2.5 KB, still under the 3900-byte guard.
 static void SnapshotSave(const WeatherData& d) {
     cJSON* root = cJSON_CreateObject();
     if (!root) return;
