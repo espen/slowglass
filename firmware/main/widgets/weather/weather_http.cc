@@ -9,6 +9,9 @@
  *                      "utc_offset_min":120}
  *   POST /api/weather {"clear":true}       -> back to IP geolocation
  *   POST /api/weather {"fetch":true}       -> refetch now
+ *   POST /api/weather {"refresh_location":true} -> drop the stored IP
+ *        geolocation, re-detect, and refetch (IP geolocation otherwise runs
+ *        once and the result is kept forever)
  *
  * The UTC offset drives today/tomorrow day bucketing; the page prefills it
  * from the browser's own timezone, which is almost always what you want.
@@ -39,7 +42,9 @@ const char kWeatherHtml[] = R"HTML(
 *{box-sizing:border-box}body{margin:0;background:#ece8dc;color:#171717;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}.app{max-width:440px;margin:0 auto;padding:12px}.brand{font-weight:800;font-size:18px;margin-bottom:10px}.panel{background:#fff;border:2px solid #111;border-radius:6px;box-shadow:3px 3px 0 #111;margin-bottom:12px;padding:12px}.status{font-weight:700}.status.ok{color:#0a7d2c}.status.err{color:#c81e1e}label{display:block;font-weight:700;margin:10px 0 4px}input{width:100%;border:2px solid #111;border-radius:4px;padding:8px;font-size:15px;background:#fafafa}.hint{color:#555;font-size:12px;margin-top:3px}.row{display:flex;gap:8px;margin-top:14px}.cols{display:flex;gap:8px}.cols>div{flex:1}.btn{flex:1;border:2px solid #111;background:#ff3b30;color:#fff;border-radius:5px;padding:10px;font-weight:800;font-size:14px;box-shadow:2px 2px 0 #111}.btn.secondary{background:#fff;color:#111;flex:0 0 auto}.btn:disabled{opacity:.45}.note{border:2px solid #111;background:#fffbe6;border-radius:6px;padding:10px;box-shadow:3px 3px 0 #111;line-height:1.5;font-size:13px}
 </style></head><body><main class="app">
 <div class="brand">Weather Location</div>
-<div class="panel"><div class="status" id="status">Loading...</div></div>
+<div class="panel"><div class="status" id="status">Loading...</div>
+<div class="row" id="relocrow" style="display:none">
+<button type="button" class="btn secondary" id="reloc">Re-detect location</button></div></div>
 <form class="panel" id="form">
 <label for="city">City label</label>
 <input id="city" placeholder="Oslo" maxlength="48" required>
@@ -68,11 +73,20 @@ function el(id){return document.getElementById(id)}
 function show(t,cls){S.textContent=t;S.className='status'+(cls?' '+cls:'')}
 el('tz').value=-new Date().getTimezoneOffset();
 function refresh(){fetch('/api/weather').then(function(r){return r.json()}).then(function(j){
+el('relocrow').style.display=j.override?'none':'flex';
 if(j.override){show('Override: '+(j.city||'(no label)')+' ('+j.lat+', '+j.lon+')','ok');
 el('city').value=j.city||'';el('lat').value=j.lat;el('lon').value=j.lon;
 if(typeof j.utc_offset_min==='number')el('tz').value=j.utc_offset_min;}
 else{show('Auto (IP geolocation): currently '+(j.resolved_city||'unresolved'),'');}
 }).catch(function(){show('Device unreachable','err')})}
+el('reloc').addEventListener('click',function(){
+show('Re-detecting location...');el('reloc').disabled=true;
+fetch('/api/weather',{method:'POST',body:JSON.stringify({refresh_location:true})})
+.then(function(r){return r.json()}).then(function(j){
+el('reloc').disabled=false;
+if(j.success){show('Re-detecting location - fetching weather...','ok');setTimeout(refresh,6000)}
+else{show('Failed: '+(j.error||'unknown'),'err')}})
+.catch(function(){el('reloc').disabled=false;show('Request failed','err')})});
 el('form').addEventListener('submit',function(e){e.preventDefault();
 var lat=parseFloat(el('lat').value.replace(',','.'));
 var lon=parseFloat(el('lon').value.replace(',','.'));
@@ -125,11 +139,18 @@ esp_err_t WeatherConfigHandler(httpd_req_t* req) {
 
         cJSON* clear = cJSON_GetObjectItemCaseSensitive(root, "clear");
         cJSON* fetch = cJSON_GetObjectItemCaseSensitive(root, "fetch");
+        cJSON* reloc = cJSON_GetObjectItemCaseSensitive(root, "refresh_location");
         if (cJSON_IsTrue(fetch)) {
             const bool started = weather_api_fetch_now();
             cJSON_Delete(root);
             web::SendJson(req, started ? "{\"success\":true,\"fetching\":true}"
                                        : "{\"success\":false,\"error\":\"not_ready\"}");
+            return ESP_OK;
+        }
+        if (cJSON_IsTrue(reloc)) {
+            weather_refresh_location();
+            cJSON_Delete(root);
+            web::SendJson(req, "{\"success\":true,\"refreshing\":true}");
             return ESP_OK;
         }
         if (cJSON_IsTrue(clear)) {

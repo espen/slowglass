@@ -285,6 +285,43 @@ static bool HttpGet(const char* url, bool https) {
 // Geolocation (ip-api.com; free endpoint is HTTP-only)
 // ============================================================
 
+static const char* kWeatherNvsNamespace = "weather";
+
+// Cached IP-geolocation result ("" lat means no cache). Resolved once and
+// kept until the user asks for a re-detect (POST /api/weather
+// {"refresh_location":true}) or clears the location override.
+static bool GeoCacheLoad() {
+    Settings nvs(kWeatherNvsNamespace, false);
+    const std::string lat = nvs.GetString("glat");
+    const std::string lon = nvs.GetString("glon");
+    if (lat.empty() || lon.empty()) return false;
+    s_lat = atof(lat.c_str());
+    s_lon = atof(lon.c_str());
+    s_utc_offset_sec = nvs.GetInt("gtzsec", kFallbackUtcOffsetSec);
+    strncpy(s_city, nvs.GetString("gcity").c_str(), sizeof(s_city) - 1);
+    s_city[sizeof(s_city) - 1] = '\0';
+    return true;
+}
+
+static void GeoCacheSave() {
+    Settings nvs(kWeatherNvsNamespace, true);
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%.4f", s_lat);
+    nvs.SetString("glat", buf);
+    snprintf(buf, sizeof(buf), "%.4f", s_lon);
+    nvs.SetString("glon", buf);
+    nvs.SetString("gcity", s_city);
+    nvs.SetInt("gtzsec", s_utc_offset_sec);
+}
+
+static void GeoCacheClear() {
+    Settings nvs(kWeatherNvsNamespace, true);
+    nvs.EraseKey("glat");
+    nvs.EraseKey("glon");
+    nvs.EraseKey("gcity");
+    nvs.EraseKey("gtzsec");
+}
+
 static void Geolocate() {
     if (s_have_location) return;
 
@@ -303,6 +340,15 @@ static void Geolocate() {
                      s_city, s_lat, s_lon, ov.utc_offset_min);
             return;
         }
+    }
+
+    // Cached IP-geolocation: skips the ip-api.com round-trip on every battery
+    // wake. Kept until the user re-detects from the /weather page.
+    if (GeoCacheLoad()) {
+        s_have_location = true;
+        ESP_LOGI(kTag, "Cached geolocation: %s (%.4f, %.4f) UTC%+d",
+                 s_city, s_lat, s_lon, s_utc_offset_sec / 3600);
+        return;
     }
 
     // Defaults in case anything below fails
@@ -341,6 +387,7 @@ static void Geolocate() {
         }
         ESP_LOGI(kTag, "Geolocated: %s (%.4f, %.4f) UTC%+d", s_city, s_lat, s_lon,
                  s_utc_offset_sec / 3600);
+        GeoCacheSave();
     } else {
         ESP_LOGW(kTag, "IP geolocation unsuccessful; using fallback %s", s_city);
     }
@@ -514,6 +561,133 @@ static bool ParseForecast(const char* json, WeatherData* out) {
 }
 
 // ============================================================
+// Snapshot persistence (NVS "weather"/"snap", compact JSON)
+//
+// The battery duty cycle makes every wake a full reboot, so without this the
+// panel shows "Waiting for weather data" until WiFi + fetch complete (or
+// shows it forever if the fetch fails). The snapshot seeds the renderers at
+// UI startup with the previous forecast instead.
+// ============================================================
+
+// NVS strings cap at ~4000 bytes; a full snapshot (12 hourly + 2 forecast
+// entries) serializes to well under 2 KB.
+static void SnapshotSave(const WeatherData& d) {
+    cJSON* root = cJSON_CreateObject();
+    if (!root) return;
+    cJSON_AddNumberToObject(root, "v", 1);
+    cJSON_AddStringToObject(root, "city", d.city.c_str());
+    cJSON_AddStringToObject(root, "date", d.date_string.c_str());
+    cJSON_AddStringToObject(root, "temp", d.temp.c_str());
+    cJSON_AddStringToObject(root, "feels", d.feels_like.c_str());
+    cJSON_AddStringToObject(root, "icon", d.weather_icon.c_str());
+    cJSON_AddStringToObject(root, "text", d.weather_text.c_str());
+    cJSON_AddStringToObject(root, "wdir", d.wind_dir.c_str());
+    cJSON_AddStringToObject(root, "wspd", d.wind_scale.c_str());
+    cJSON_AddStringToObject(root, "hum", d.humidity.c_str());
+    cJSON_AddStringToObject(root, "ut", d.update_time.c_str());
+    cJSON_AddNumberToObject(root, "ti", d.temp_int);
+
+    cJSON* fc = cJSON_AddArrayToObject(root, "fc");
+    for (const auto& f : d.forecast) {
+        cJSON* e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "l", f.label.c_str());
+        cJSON_AddStringToObject(e, "x", f.weather_text.c_str());
+        cJSON_AddStringToObject(e, "i", f.icon_code.c_str());
+        cJSON_AddNumberToObject(e, "a", f.temp_min);
+        cJSON_AddNumberToObject(e, "b", f.temp_max);
+        cJSON_AddItemToArray(fc, e);
+    }
+    cJSON* hr = cJSON_AddArrayToObject(root, "hr");
+    for (const auto& h : d.hourly) {
+        cJSON* e = cJSON_CreateObject();
+        cJSON_AddNumberToObject(e, "h", h.hour_local);
+        cJSON_AddNumberToObject(e, "e", (double)h.epoch);
+        cJSON_AddNumberToObject(e, "t", h.temp);
+        cJSON_AddNumberToObject(e, "p", h.precip_mm);
+        cJSON_AddStringToObject(e, "i", h.icon_code.c_str());
+        cJSON_AddItemToArray(hr, e);
+    }
+
+    char* json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json) return;
+    if (strlen(json) < 3900) {
+        Settings nvs(kWeatherNvsNamespace, true);
+        nvs.SetString("snap", json);
+    } else {
+        ESP_LOGW(kTag, "Snapshot too large for NVS (%d bytes), not persisted",
+                 (int)strlen(json));
+    }
+    cJSON_free(json);
+}
+
+static bool SnapshotLoad(WeatherData* out) {
+    std::string json;
+    {
+        Settings nvs(kWeatherNvsNamespace, false);
+        json = nvs.GetString("snap");
+    }
+    if (json.empty()) return false;
+    cJSON* root = cJSON_Parse(json.c_str());
+    if (!root) return false;
+
+    auto str = [root](const char* key) -> std::string {
+        cJSON* item = cJSON_GetObjectItem(root, key);
+        return cJSON_IsString(item) ? item->valuestring : "";
+    };
+    out->city = str("city");
+    out->date_string = str("date");
+    out->temp = str("temp");
+    out->feels_like = str("feels");
+    out->weather_icon = str("icon");
+    out->weather_text = str("text");
+    out->wind_dir = str("wdir");
+    out->wind_scale = str("wspd");
+    out->humidity = str("hum");
+    out->update_time = str("ut");
+    cJSON* ti = cJSON_GetObjectItem(root, "ti");
+    out->temp_int = cJSON_IsNumber(ti) ? (int32_t)ti->valueint : 0;
+
+    out->forecast.clear();
+    cJSON* fc = cJSON_GetObjectItem(root, "fc");
+    cJSON* e = nullptr;
+    cJSON_ArrayForEach(e, fc) {
+        auto estr = [e](const char* key) -> std::string {
+            cJSON* item = cJSON_GetObjectItem(e, key);
+            return cJSON_IsString(item) ? item->valuestring : "";
+        };
+        WeatherForecastDay f;
+        f.label = estr("l");
+        f.weather_text = estr("x");
+        f.icon_code = estr("i");
+        cJSON* a = cJSON_GetObjectItem(e, "a");
+        cJSON* b = cJSON_GetObjectItem(e, "b");
+        if (cJSON_IsNumber(a)) f.temp_min = (int32_t)a->valueint;
+        if (cJSON_IsNumber(b)) f.temp_max = (int32_t)b->valueint;
+        out->forecast.push_back(f);
+    }
+    out->hourly.clear();
+    cJSON* hr = cJSON_GetObjectItem(root, "hr");
+    cJSON_ArrayForEach(e, hr) {
+        WeatherHourly h;
+        cJSON* hh = cJSON_GetObjectItem(e, "h");
+        cJSON* ep = cJSON_GetObjectItem(e, "e");
+        cJSON* t = cJSON_GetObjectItem(e, "t");
+        cJSON* p = cJSON_GetObjectItem(e, "p");
+        cJSON* i = cJSON_GetObjectItem(e, "i");
+        if (cJSON_IsNumber(hh)) h.hour_local = hh->valueint;
+        if (cJSON_IsNumber(ep)) h.epoch = (int64_t)ep->valuedouble;
+        if (cJSON_IsNumber(t)) h.temp = (int32_t)t->valueint;
+        if (cJSON_IsNumber(p)) h.precip_mm = (float)p->valuedouble;
+        if (cJSON_IsString(i)) h.icon_code = i->valuestring;
+        out->hourly.push_back(h);
+    }
+
+    cJSON_Delete(root);
+    return !out->temp.empty();
+}
+
+// ============================================================
 // Fetch orchestration
 // ============================================================
 
@@ -531,13 +705,24 @@ static void DoFetch(void* arg) {
     ESP_LOGI(kTag, "Fetching forecast: %s", url);
 
     WeatherData data;
-    if (!HttpGet(url, true) || !ParseForecast(s_response_buf, &data)) {
+    const bool ok = HttpGet(url, true) && ParseForecast(s_response_buf, &data);
+
+    // The ~96 KB response buffer is only needed during a fetch; release it
+    // between fetches (it is re-allocated on demand by HttpGet).
+    if (s_response_buf) {
+        free(s_response_buf);
+        s_response_buf = nullptr;
+        s_response_len = 0;
+    }
+
+    if (!ok) {
         ESP_LOGE(kTag, "Failed to fetch or parse forecast");
         s_in_progress = false;
         return;
     }
 
     s_last_data = data;
+    SnapshotSave(data);
     ESP_LOGI(kTag, "Weather: %s %s°C (feels %s) in %s, forecast days=%d, hourly=%d",
              data.weather_text.c_str(), data.temp.c_str(),
              data.feels_like.empty() ? "-" : data.feels_like.c_str(),
@@ -579,15 +764,35 @@ const WeatherData* weather_api_get_last_data() {
     return &s_last_data;
 }
 
+bool weather_api_load_cached(WeatherData* out) {
+    if (!out) return false;
+    // A live fetch always beats the persisted snapshot.
+    if (!s_last_data.temp.empty()) {
+        *out = s_last_data;
+        return true;
+    }
+    if (!SnapshotLoad(out)) return false;
+    s_last_data = *out;
+    ESP_LOGI(kTag, "Loaded cached forecast: %s %s°C in %s (from %s)",
+             out->weather_text.c_str(), out->temp.c_str(),
+             out->city.c_str(), out->update_time.c_str());
+    return true;
+}
+
 const char* weather_api_get_city() {
     return s_city;
+}
+
+void weather_refresh_location() {
+    ESP_LOGI(kTag, "Location re-detect requested; dropping cached geolocation");
+    GeoCacheClear();
+    s_have_location = false;
+    if (s_initialized) weather_api_fetch_now();
 }
 
 // ============================================================
 // Location override (NVS namespace "weather": lat, lon, city, tzmin)
 // ============================================================
-
-static const char* kWeatherNvsNamespace = "weather";
 
 WeatherLocationOverride weather_get_location_override() {
     WeatherLocationOverride ov;
@@ -638,6 +843,7 @@ void weather_clear_location_override() {
         nvs.EraseKey("tzmin");
     }
     ESP_LOGI(kTag, "Location override cleared; using IP geolocation");
+    GeoCacheClear();  // force a fresh IP lookup, not the cached one
     s_have_location = false;
     if (s_initialized) weather_api_fetch_now();
 }

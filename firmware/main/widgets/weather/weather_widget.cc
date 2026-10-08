@@ -22,6 +22,21 @@ namespace {
 rawdraw::WeatherRenderer* s_renderer = nullptr;
 rawdraw::WeatherDetailRenderer* s_detail_renderer = nullptr;
 
+// Seed a freshly created renderer with the forecast persisted across the
+// deep-sleep reboot, so the first paint shows the previous fetch instead of
+// "Waiting for weather data" (shown only on a true first-ever render).
+void SeedFromCache() {
+    WeatherData cached;
+    if (!weather_api_load_cached(&cached)) return;
+    if (s_renderer != nullptr) {
+        s_renderer->SetCityName(cached.city.c_str());
+        s_renderer->Update(cached);
+    }
+    if (s_detail_renderer != nullptr) {
+        s_detail_renderer->Update(cached);
+    }
+}
+
 void OnNetworkUp(const WidgetContext& ctx) {
     if (weather_api_is_ready()) return;
     weather_api_init([ctx](const WeatherData& weather) {
@@ -32,9 +47,15 @@ void OnNetworkUp(const WidgetContext& ctx) {
         if (s_detail_renderer != nullptr) {
             s_detail_renderer->Update(weather);
         }
-        if (ctx.current_page && ctx.current_page() == ui::RawDrawPageId::Weather &&
-            ctx.request_full_refresh) {
-            ctx.request_full_refresh();
+        // Queue a re-render if a weather page is on screen (the 1 s UI pump
+        // picks it up; request_full_refresh alone only sets a flag and never
+        // repaints, which left the panel on the waiting screen).
+        if (ctx.current_page && ctx.request_active_page_refresh) {
+            const ui::RawDrawPageId page = ctx.current_page();
+            if (page == ui::RawDrawPageId::Weather ||
+                page == ui::RawDrawPageId::WeatherDetail) {
+                ctx.request_active_page_refresh();
+            }
         }
     });
 }
@@ -48,11 +69,13 @@ void RegisterWeatherWidget() {
         {ui::RawDrawPageId::Weather, "weather", "Weather", nullptr,
          []() -> rawdraw::PageRenderer* {
              s_renderer = new rawdraw::WeatherRenderer();
+             SeedFromCache();
              return s_renderer;
          }},
         {ui::RawDrawPageId::WeatherDetail, nullptr, "Weather Detail", nullptr,
          []() -> rawdraw::PageRenderer* {
              s_detail_renderer = new rawdraw::WeatherDetailRenderer();
+             SeedFromCache();
              return s_detail_renderer;
          }},
     };

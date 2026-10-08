@@ -128,9 +128,27 @@ bool weather_api_is_ready();
 const WeatherData* weather_api_get_last_data();
 
 /**
+ * @brief Load the last successful fetch persisted in NVS (survives deep
+ *        sleep / reboot). Use it to seed renderers before the network is up
+ *        so the user sees the previous forecast instead of a waiting screen.
+ * @return true if a snapshot was loaded into *out
+ */
+bool weather_api_load_cached(WeatherData* out);
+
+/**
  * @brief Resolved city name ("" until geolocation has run)
  */
 const char* weather_api_get_city();
+
+/**
+ * @brief Drop the stored IP-geolocation result and re-resolve + refetch now.
+ *
+ * IP geolocation runs once and the result is kept in NVS indefinitely (the
+ * device rarely moves); this is the explicit "re-detect location" action
+ * exposed on the /weather page. No effect on a configured override — that
+ * always wins.
+ */
+void weather_refresh_location();
 
 // ============================================================
 // Location override (NVS namespace "weather")

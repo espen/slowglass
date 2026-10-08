@@ -17,6 +17,20 @@ geolocation (fallback: New York) and an hourly-detail page.
   entry; reachable programmatically).
 - `weather_card.{h,cc}` — reusable weather card drawing helpers.
 
+## Data freshness and caching
+
+- The last successful forecast is persisted to NVS (`weather/snap`) and
+  seeds the renderers at UI startup, so after a deep-sleep wake or reboot
+  the dashboard shows the previous fetch immediately. "Waiting for weather
+  data" appears only before the first-ever successful fetch.
+- Renderers keep their data across page switches; a fetch landing while a
+  weather page is on screen queues a re-render through the UI pump.
+- IP geolocation runs once and the result is stored in NVS
+  (`weather/glat|glon|gcity|gtzsec`) — one less HTTP round-trip per battery
+  wake. It is re-resolved only on explicit request: the "Re-detect location"
+  button on `/weather` (or `POST /api/weather {"refresh_location":true}`),
+  or clearing the location override.
+
 ## Configuration
 
 Refresh interval override: NVS `datasrc/weather` (minutes, 0 = disabled).

@@ -340,7 +340,9 @@ WeatherRenderer::~WeatherRenderer() {}
 void WeatherRenderer::Init(int width, int height) {
     width_ = width;
     height_ = height;
-    has_data_ = false;
+    // Keep has_data_/current_data_: Init runs on every page switch, and
+    // clearing them forced a "Waiting for weather data" screen on each visit
+    // until the next fetch. Stale data stays visible; fetches replace it.
     needs_full_refresh_ = true;
     page_index_ = 0;
     firmware_version_.clear();
