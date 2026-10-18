@@ -15,7 +15,8 @@ widget references `application.h`, `boards/*`, or the UI manager
      `widgets::RendererFor(page)`,
    - call `widgets::OnNetworkUp(ctx)` when the network connects,
    - call `widgets::RegisterHttpHandlers(server)` if you run esp_http_server,
-   - feed `widgets::MinutesToNextWake()` into your sleep scheduling.
+   - feed `widgets::MinutesToNextWake(page, fallback)` (for the page left
+     on screen) into your sleep scheduling.
 
 2. **The rawdraw drawing library** — `main/rawdraw/` (1bpp framebuffer
    primitives, fonts, theme) and the `rawdraw::PageRenderer` base class

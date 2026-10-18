@@ -12,6 +12,8 @@
 
 #include <atomic>
 #include <cstring>
+#include <mutex>
+#include <string>
 #include <vector>
 
 #include "settings.h"
@@ -26,6 +28,8 @@ struct Entry {
     DataSourceDef def;
     esp_timer_handle_t timer = nullptr;
     std::atomic<bool> in_progress{false};
+    std::atomic<int64_t> last_fetch_us{-1};  // start of last fetch; -1 = never
+    int64_t armed_period_us = 0;              // guarded by s_mutex
 
     explicit Entry(const DataSourceDef& d) : def(d) {}
 };
@@ -37,6 +41,9 @@ std::vector<Entry*>& Registry() {
 }
 
 bool s_started = false;
+// Only the source behind the on-screen page polls; empty = none.
+std::string s_active;
+std::mutex s_mutex;  // guards s_started, s_active and timer arming
 
 Entry* Find(const char* name) {
     if (!name) return nullptr;
@@ -67,6 +74,7 @@ bool StartFetch(Entry* entry) {
         entry->in_progress.store(false, std::memory_order_release);
         return false;
     }
+    entry->last_fetch_us.store(esp_timer_get_time(), std::memory_order_release);
     return true;
 }
 
@@ -95,27 +103,18 @@ int data_source_interval_minutes(const char* name) {
     return minutes;
 }
 
-int data_sources_min_interval_minutes(int fallback_minutes) {
-    int best = 0;
-    for (auto* e : Registry()) {
-        const int m = data_source_interval_minutes(e->def.name);
-        if (m > 0 && (best == 0 || m < best)) best = m;
-    }
-    return best > 0 ? best : fallback_minutes;
-}
+namespace {
 
-void data_sources_start() {
-    // Idempotent: on re-call (network back, or a source registered after the
-    // first start, e.g. MakePlans pairing completing mid-session) this arms
-    // timers that are still missing and refreshes everything enabled.
-    const bool first_start = !s_started;
-    s_started = true;
-
+// Caller holds s_mutex. Stops every inactive source's timer; arms the active
+// one and fetches it if its data is older than its interval (or missing).
+void ApplyActiveLocked() {
     for (auto* e : Registry()) {
-        const int minutes = data_source_interval_minutes(e->def.name);
+        const bool active = s_started && s_active == e->def.name;
+        const int minutes = active ? data_source_interval_minutes(e->def.name) : 0;
         if (minutes <= 0) {
-            if (first_start) {
-                ESP_LOGI(kTag, "Data source '%s' disabled by config", e->def.name);
+            if (e->timer != nullptr && esp_timer_is_active(e->timer)) {
+                esp_timer_stop(e->timer);
+                ESP_LOGI(kTag, "Paused '%s'", e->def.name);
             }
             continue;
         }
@@ -126,15 +125,57 @@ void data_sources_start() {
             args.dispatch_method = ESP_TIMER_TASK;
             args.name = e->def.name;
             args.skip_unhandled_events = true;
-            if (esp_timer_create(&args, &e->timer) == ESP_OK) {
-                esp_timer_start_periodic(e->timer, (int64_t)minutes * 60 * 1000 * 1000);
-                ESP_LOGI(kTag, "Started '%s' (every %d min)", e->def.name, minutes);
-            } else {
+            if (esp_timer_create(&args, &e->timer) != ESP_OK) {
                 ESP_LOGE(kTag, "Failed to create timer for %s", e->def.name);
+                continue;
             }
         }
-        StartFetch(e);
+        const int64_t period_us = (int64_t)minutes * 60 * 1000 * 1000;
+        if (esp_timer_is_active(e->timer) && e->armed_period_us != period_us) {
+            esp_timer_stop(e->timer);  // interval changed in NVS: re-arm
+        }
+        if (!esp_timer_is_active(e->timer)) {
+            esp_timer_start_periodic(e->timer, period_us);
+            e->armed_period_us = period_us;
+            ESP_LOGI(kTag, "Started '%s' (every %d min)", e->def.name, minutes);
+        }
+        const int64_t last = e->last_fetch_us.load(std::memory_order_acquire);
+        if (last < 0 || esp_timer_get_time() - last >= period_us) {
+            StartFetch(e);
+        }
     }
+}
+
+}  // namespace
+
+void data_sources_start() {
+    // Idempotent: on re-call (network back, or a source registered after the
+    // first start, e.g. MakePlans pairing completing mid-session) this arms
+    // the active source if needed and refreshes it if stale.
+    std::lock_guard<std::mutex> lock(s_mutex);
+    s_started = true;
+    ApplyActiveLocked();
+}
+
+void data_sources_reload() {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    ApplyActiveLocked();
+}
+
+void data_sources_set_active(const char* name) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+    const std::string next = name ? name : "";
+    if (next == s_active) return;
+    s_active = next;
+    ESP_LOGI(kTag, "Active source: '%s'", s_active.c_str());
+    ApplyActiveLocked();
+}
+
+bool data_sources_busy() {
+    for (auto* e : Registry()) {
+        if (e->in_progress.load(std::memory_order_acquire)) return true;
+    }
+    return false;
 }
 
 size_t data_sources_count() {

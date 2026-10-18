@@ -710,6 +710,7 @@ esp_err_t ApTransferServer::PagesConfigHandler(httpd_req_t* req) {
                              item->string, item->valueint);
                 }
             }
+            data_sources_reload();
         }
         cJSON_Delete(root);
         if (!ok) {

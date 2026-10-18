@@ -135,6 +135,12 @@ widgets::WidgetContext MakeWidgetContext(Application* app) {
     return ctx;
 }
 
+// Widgets name their data source after themselves ("weather").
+void ActivateSourceForPage(ui::RawDrawPageId page) {
+    const auto* widget = widgets::FindWidget(page);
+    data_sources_set_active(widget ? widget->name : nullptr);
+}
+
 }  // namespace
 
 Application::Application() = default;
@@ -183,6 +189,10 @@ void Application::Initialize() {
             lcd->RequestUrgentRefresh();
         }
     });
+    // Only the on-screen page's data source polls, on USB and battery alike.
+    ActivateSourceForPage(rawdraw_ui_manager_->GetCurrentPage());
+    rawdraw_ui_manager_->SetPageSwitchCallback(
+        [](ui::RawDrawPageId page) { ActivateSourceForPage(page); });
 
     if (auto* sr = rawdraw_ui_manager_->GetSettingsRenderer()) {
         Settings gallery_nvs(kGalleryNamespace, false);
@@ -350,12 +360,13 @@ void Application::Initialize() {
                     rawdraw_ui_manager_->SwitchPage(ui::pageconfig::HomePage());
                 }
                 // Let every widget register its data sources and wire its
-                // API callbacks, then start/refresh them all now that we
-                // have connectivity (widget hooks guard their own one-time
-                // init; data_sources_start is idempotent and re-fetches on
-                // reconnect).
+                // API callbacks, then start the on-screen page's source now
+                // that we have connectivity (widget hooks guard their own
+                // one-time init; data_sources_start is idempotent and
+                // re-fetches on reconnect if the data is stale).
                 widgets::OnNetworkUp(MakeWidgetContext(this));
                 data_sources_start();
+                data_started_.store(true, std::memory_order_release);
                 UpdateStatusBarForUi();
                 ArmSyncSleepTimer();
                 break;
@@ -595,13 +606,14 @@ void Application::EnterScheduledSleep() {
     }
 
     if (on_battery) {
-        // Self-wake at the fastest cadence any enabled data source wants, so
-        // e.g. a 10-min transit source shortens the sleep automatically.
-        int wake_minutes =
-            data_sources_min_interval_minutes((int)kBatterySleepIntervalMinutes);
-        // Widgets can shorten the sleep (e.g. the door sign wakes at the
-        // next booking boundary so the panel flips on time, not a poll late).
-        wake_minutes = widgets::MinutesToNextWake(wake_minutes);
+        // Self-wake at the cadence of the page left on the panel: its data
+        // source interval, shortened by its widget (e.g. the door sign wakes
+        // at the next booking boundary). Off-screen sources don't wake us.
+        const ui::RawDrawPageId page = rawdraw_ui_manager_
+                                           ? rawdraw_ui_manager_->GetCurrentPage()
+                                           : ui::pageconfig::HomePage();
+        const int wake_minutes =
+            widgets::MinutesToNextWake(page, (int)kBatterySleepIntervalMinutes);
         esp_sleep_enable_timer_wakeup(wake_minutes * 60LL * 1000 * 1000);
         ESP_LOGI(kTag, "Entering deep sleep; timer wake in %d min, BOOT wakes sooner",
                  wake_minutes);

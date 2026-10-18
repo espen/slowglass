@@ -8,13 +8,15 @@
  *
  *  - each fetch runs in its own short-lived task (TLS + JSON parsing need far
  *    more stack than esp_timer / WiFi-event tasks provide)
- *  - one periodic esp_timer per source
+ *  - one periodic esp_timer per source, running only for the active source
+ *    (the one behind the page on screen)
  *  - refresh interval is per source, overridable in NVS (namespace "datasrc",
  *    key = source name, value = minutes; 0 disables the source)
  *
  * Adding an app = write a fetch function + renderer, then:
  *   data_source_register({"transit", 10, TransitFetch});
- * and call data_sources_start() once the network is up (idempotent).
+ * call data_sources_set_active() on page changes, and data_sources_start()
+ * once the network is up (idempotent).
  */
 
 #ifndef DATA_SOURCE_H
@@ -31,20 +33,28 @@ struct DataSourceDef {
 /** Register a source. Call before data_sources_start(); duplicate names ignored. */
 void data_source_register(const DataSourceDef& def);
 
-/** Start timers + initial fetch for all registered sources. Idempotent;
- *  call when the network becomes available. */
+/** Network is up: arm the active source's timer and fetch it if its data is
+ *  stale. Idempotent; call when the network becomes available. */
 void data_sources_start();
+
+/** Only the source behind the on-screen page polls. Set it on every page
+ *  change (nullptr/unknown = none); others' timers stop, and the new one
+ *  fetches if older than its interval once the network is up. */
+void data_sources_set_active(const char* name);
+
+/** Re-apply NVS intervals after a change (re-arms the active timer with the
+ *  new period). No fetch or timer before the network is up. */
+void data_sources_reload();
 
 /** Trigger one source immediately (no-op if unknown, disabled, or mid-fetch).
  *  Returns true if a fetch was started. */
 bool data_source_fetch_now(const char* name);
 
+/** True while any source has a fetch task running. */
+bool data_sources_busy();
+
 /** Effective interval for one source (NVS override applied); 0 = disabled. */
 int data_source_interval_minutes(const char* name);
-
-/** Smallest enabled interval across sources — the cadence the battery sleep
- *  cycle should honor. Returns fallback_minutes if nothing is enabled. */
-int data_sources_min_interval_minutes(int fallback_minutes);
 
 /** Enumeration for config UIs. */
 size_t data_sources_count();

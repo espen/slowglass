@@ -51,8 +51,14 @@ bool RegisterHttpHandlers(httpd_handle_t server);
 /** Notify widgets that the LAN web server is up at url_base. */
 void OnLanServerStarted(const std::string& url_base);
 
-/** Minimum of all widgets' minutes_to_next_wake(fallback). */
-int MinutesToNextWake(int fallback_minutes);
+/** Widget owning a page, or nullptr (core page / not compiled in). */
+const WidgetDef* FindWidget(ui::RawDrawPageId id);
+
+/** Battery sleep length while `page` is on the panel: its widget's data
+ *  source interval (falls back to fallback_minutes), shortened by the
+ *  widget's minutes_to_next_wake(). Other widgets are off-screen while the
+ *  device sleeps, so they don't get a say. */
+int MinutesToNextWake(ui::RawDrawPageId page, int fallback_minutes);
 
 }  // namespace widgets
 

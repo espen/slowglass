@@ -5,6 +5,7 @@
 
 #include "widgets/widget_registry.h"
 
+#include "common/data_source.h"
 #include "ui/renderers/rawdraw/page_renderer.h"
 
 #include <esp_log.h>
@@ -143,12 +144,23 @@ void OnLanServerStarted(const std::string& url_base) {
     }
 }
 
-int MinutesToNextWake(int fallback_minutes) {
-    int minutes = fallback_minutes;
+const WidgetDef* FindWidget(ui::RawDrawPageId id) {
     for (const auto& def : All()) {
-        if (def.minutes_to_next_wake != nullptr) {
-            minutes = std::min(minutes, def.minutes_to_next_wake(fallback_minutes));
+        for (const auto& page : def.pages) {
+            if (page.id == id) return &def;
         }
+    }
+    return nullptr;
+}
+
+int MinutesToNextWake(ui::RawDrawPageId page, int fallback_minutes) {
+    const WidgetDef* def = FindWidget(page);
+    if (def == nullptr) return fallback_minutes;
+    // Widgets name their data source after themselves ("weather").
+    const int source_minutes = data_source_interval_minutes(def->name);
+    int minutes = source_minutes > 0 ? source_minutes : fallback_minutes;
+    if (def->minutes_to_next_wake != nullptr) {
+        minutes = std::min(minutes, def->minutes_to_next_wake(minutes));
     }
     return minutes;
 }

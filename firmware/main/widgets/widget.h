@@ -106,7 +106,7 @@ struct WidgetDef {
 
     /** Battery deep-sleep hook: minutes until this widget next needs the
      *  device awake, or fallback_minutes if nothing sooner. The platform
-     *  takes the minimum across widgets and data sources. */
+     *  only asks the widget whose page is on the panel at sleep time. */
     int (*minutes_to_next_wake)(int fallback_minutes) = nullptr;
 };
 
