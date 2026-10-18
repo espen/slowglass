@@ -24,6 +24,7 @@
 #include "settings.h"
 
 #include <esp_log.h>
+#include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
@@ -40,11 +41,14 @@
 static const char* kTag = "MakePlans";
 static const char* kUserAgent = "zectrix-note4c-doorsign/0.1 (personal devkit)";
 
-// Pinned trust anchors for *.makeplans.com (Let's Encrypt hierarchy).
-// The server presents its intermediates out of order, which the global
-// esp_crt_bundle path cannot follow (mbedtls only searches FORWARD in the
-// presented list for a parent). Explicit trust anchors are consulted at
-// every step of the chain walk, making the presented order irrelevant.
+// Fallback trust anchors for *.makeplans.com (Let's Encrypt hierarchy).
+// While the server used Let's Encrypt it presented its intermediates out of
+// order, which the global esp_crt_bundle path cannot follow (mbedtls only
+// searches FORWARD in the presented list for a parent). Explicit trust
+// anchors are consulted at every step of the chain walk, making the
+// presented order irrelevant. Since 2026-10-14 the server uses ZeroSSL
+// (Sectigo/USERTrust), which the bundle verifies, so the bundle is tried
+// first and these only if it fails — see HttpDo().
 static const char kIsrgRootsPem[] =
     // Root YE (cross-signed by ISRG Root X2; same subject+key as the self-signed root)
     "-----BEGIN CERTIFICATE-----\n"
@@ -238,12 +242,12 @@ static esp_err_t HttpEvent(esp_http_client_event_t* evt) {
     return ESP_OK;
 }
 
-// Perform a request; returns HTTP status, or -1 on transport failure.
-// extra_headers: {key, value} pairs. body != nullptr makes it a POST with
-// Content-Type application/x-www-form-urlencoded.
-static int HttpDo(const std::string& url, HttpCtx* ctx,
-                  const std::vector<std::pair<std::string, std::string>>& extra_headers,
-                  const char* post_body, bool follow_redirects) {
+// One request against a single trust store; see HttpDo().
+static int HttpAttempt(const std::string& url, HttpCtx* ctx,
+                       const std::vector<std::pair<std::string, std::string>>& extra_headers,
+                       const char* post_body, bool follow_redirects, bool pinned_roots,
+                       esp_err_t* err_out) {
+    *err_out = ESP_OK;
     esp_http_client_config_t config = {};
     config.url = url.c_str();
     config.method = post_body ? HTTP_METHOD_POST : HTTP_METHOD_GET;
@@ -253,7 +257,11 @@ static int HttpDo(const std::string& url, HttpCtx* ctx,
     config.disable_auto_redirect = !follow_redirects;
     config.max_redirection_count = follow_redirects ? 3 : 0;
     config.user_agent = kUserAgent;
-    config.cert_pem = kIsrgRootsPem;
+    if (pinned_roots) {
+        config.cert_pem = kIsrgRootsPem;
+    } else {
+        config.crt_bundle_attach = esp_crt_bundle_attach;
+    }
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
@@ -271,6 +279,7 @@ static int HttpDo(const std::string& url, HttpCtx* ctx,
 
     esp_err_t err = esp_http_client_perform(client);
     if (err != ESP_OK) {
+        *err_out = err;
         ESP_LOGE(kTag, "HTTP request failed: %s (%s)", esp_err_to_name(err), url.c_str());
         esp_http_client_cleanup(client);
         return -1;
@@ -280,6 +289,30 @@ static int HttpDo(const std::string& url, HttpCtx* ctx,
     if (ctx && ctx->buf) ctx->buf[ctx->len] = '\0';
     if (ctx && ctx->overflow) {
         ESP_LOGW(kTag, "Response truncated at %u bytes (%s)", (unsigned)ctx->cap, url.c_str());
+    }
+    return status;
+}
+
+// Trust store that last completed a handshake; starts on the CA bundle.
+static bool s_use_pinned_roots = false;
+
+// Perform a request; returns HTTP status, or -1 on transport failure.
+// extra_headers: {key, value} pairs. body != nullptr makes it a POST with
+// Content-Type application/x-www-form-urlencoded.
+static int HttpDo(const std::string& url, HttpCtx* ctx,
+                  const std::vector<std::pair<std::string, std::string>>& extra_headers,
+                  const char* post_body, bool follow_redirects) {
+    esp_err_t err = ESP_OK;
+    int status = HttpAttempt(url, ctx, extra_headers, post_body, follow_redirects,
+                             s_use_pinned_roots, &err);
+    // A failed handshake (e.g. the server changed CA) surfaces as a connect
+    // error before any response data, so retrying with the other trust
+    // store cannot double-apply a request.
+    if (err == ESP_ERR_HTTP_CONNECT) {
+        const bool other = !s_use_pinned_roots;
+        ESP_LOGW(kTag, "Retrying with %s", other ? "pinned ISRG roots" : "CA bundle");
+        status = HttpAttempt(url, ctx, extra_headers, post_body, follow_redirects, other, &err);
+        if (err == ESP_OK) s_use_pinned_roots = other;
     }
     return status;
 }
