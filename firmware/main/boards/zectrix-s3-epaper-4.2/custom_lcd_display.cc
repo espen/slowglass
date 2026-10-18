@@ -4,6 +4,7 @@
 
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -240,22 +241,28 @@ CustomLcdDisplay::CustomLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_p
         sample_interval_ms = kFourColorSampleIntervalMs;
     }
 
-    ESP_LOGI(TAG, "EPD init");
-    EPD_Init();
-
     // buffer init
     EPD_Clear();
     memcpy(prev_buffer, buffer, lcd_spi_data.buffer_len);
-#if CONFIG_ZECTRIX_EPD_4COLOR_BOOT_TEST_PATTERN
-    if (IsFourColorPanel()) {
-        EPD_DisplayFourColorTestPattern();
+    if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+        // The panel still shows the pre-sleep image; skip the ~20 s blank
+        // frame and let the first real frame do a full refresh.
+        ESP_LOGI(TAG, "EPD init skipped on deep-sleep wake");
+        prev_buffer_synced = false;
     } else {
-        EPD_Display();
-    }
+        ESP_LOGI(TAG, "EPD init");
+        EPD_Init();
+#if CONFIG_ZECTRIX_EPD_4COLOR_BOOT_TEST_PATTERN
+        if (IsFourColorPanel()) {
+            EPD_DisplayFourColorTestPattern();
+        } else {
+            EPD_Display();
+        }
 #else
-    EPD_Display();
+        EPD_Display();
 #endif
-    prev_buffer_synced = true;
+        prev_buffer_synced = true;
+    }
     if (IsFourColorPanel()) {
         last_sample_tick = xTaskGetTickCount();
     }

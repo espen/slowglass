@@ -33,6 +33,12 @@ constexpr char kSlideshowIntervalKey[] = "slide_min";
 // Battery duty cycle: short awake window per wake, then deep sleep with an
 // hourly timer wake so the weather stays current off USB.
 constexpr int kBatteryAwakeWindowMinutes = 4;
+// Failsafe for unattended timer wakes (e.g. WiFi down); the normal path
+// sleeps within seconds once fetches and the refresh finish.
+constexpr int kBatteryTimerWakeFailsafeMinutes = 1;
+// Idle seconds required before a quick sleep, so a render queued by a
+// just-finished fetch has registered as a pending refresh.
+constexpr int kQuickSleepIdleSeconds = 3;
 constexpr int64_t kBatterySleepIntervalMinutes = 60;
 constexpr int kSettingsSlideshowIndex = 3;
 constexpr int kSettingsWifiIndex = 5;
@@ -314,7 +320,10 @@ void Application::Initialize() {
     }
 
     ESP_LOGI(kTag, "Rawdraw gallery UI initialized");
-    if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+    // A timer wake redraws once its fetches land; an extra cached-data
+    // refresh first would cost another full 4-color panel cycle.
+    const bool timer_wake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+    if (esp_reset_reason() == ESP_RST_DEEPSLEEP && !timer_wake) {
         ESP_LOGI(kTag, "Wake from deep sleep: flash activity LED and refresh UI");
         board.FlashActivityLed();
         if (rawdraw_ui_manager_) {
@@ -325,6 +334,7 @@ void Application::Initialize() {
     // WiFi still goes back to sleep instead of draining the battery. A later
     // WiFi connect re-arms the window from that moment.
     if (IsOnBatteryPower()) {
+        quick_sleep_.store(timer_wake, std::memory_order_release);
         ArmSyncSleepTimer();
     }
 
@@ -424,6 +434,7 @@ void Application::Initialize() {
 
 void Application::OnUpClick() {
     ESP_LOGI(kTag, "UP click");
+    CancelQuickSleep();
     Board::GetInstance().FlashActivityLed();
     if (rawdraw_ui_manager_) {
         rawdraw_ui_manager_->HandleInput(rawdraw::ButtonEvent{rawdraw::ButtonEvent::kUpClick});
@@ -441,6 +452,7 @@ void Application::OnUpDoubleClick() {
 
 void Application::OnDownClick() {
     ESP_LOGI(kTag, "DOWN click");
+    CancelQuickSleep();
     Board::GetInstance().FlashActivityLed();
     if (rawdraw_ui_manager_) {
         rawdraw_ui_manager_->HandleInput(rawdraw::ButtonEvent{rawdraw::ButtonEvent::kDownClick});
@@ -474,6 +486,7 @@ void Application::OnWifiConfigComboLongPress() {
 
 void Application::OnBootClick() {
     ESP_LOGI(kTag, "BOOT click");
+    CancelQuickSleep();
     Board::GetInstance().FlashActivityLed();
     if (rawdraw_ui_manager_) {
         rawdraw_ui_manager_->HandleInput(rawdraw::ButtonEvent{rawdraw::ButtonEvent::kBootClick});
@@ -497,9 +510,36 @@ void Application::OnBootLongPress() {
 }
 
 void Application::NoteButtonActivity() {
+    CancelQuickSleep();
     Board::GetInstance().FlashActivityLed();
     if (rawdraw_ui_manager_) {
         rawdraw_ui_manager_->RequestActivePageRefresh();
+    }
+}
+
+void Application::CancelQuickSleep() {
+    if (quick_sleep_.exchange(false, std::memory_order_acq_rel)) {
+        ESP_LOGI(kTag, "User input on timer wake: keeping the full awake window");
+        ArmSyncSleepTimer();
+    }
+}
+
+void Application::PumpQuickSleep() {
+    if (!quick_sleep_.load(std::memory_order_acquire) ||
+        !data_started_.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (!IsOnBatteryPower()) {
+        quick_sleep_.store(false, std::memory_order_release);
+        return;
+    }
+    const bool busy = data_sources_busy() ||
+                      (rawdraw_ui_manager_ && rawdraw_ui_manager_->IsDisplayRefreshPending());
+    quick_sleep_idle_s_ = busy ? 0 : quick_sleep_idle_s_ + 1;
+    if (quick_sleep_idle_s_ >= kQuickSleepIdleSeconds) {
+        ESP_LOGI(kTag, "Timer wake work done after %lld ms; sleeping early",
+                 esp_timer_get_time() / 1000);
+        EnterScheduledSleep();
     }
 }
 
@@ -553,7 +593,9 @@ void Application::ArmSyncSleepTimer() {
 
     int interval_minutes;
     if (on_battery) {
-        interval_minutes = kBatteryAwakeWindowMinutes;
+        interval_minutes = quick_sleep_.load(std::memory_order_acquire)
+                               ? kBatteryTimerWakeFailsafeMinutes
+                               : kBatteryAwakeWindowMinutes;
     } else {
         Settings nvs(kSyncNamespace, false);
         interval_minutes = nvs.GetInt(kSyncIntervalKey, 30);
@@ -623,6 +665,7 @@ void Application::EnterScheduledSleep() {
     wifi_connected_.store(false, std::memory_order_release);
     esp_wifi_disconnect();
     esp_wifi_stop();
+    Board::GetInstance().PrepareForDeepSleep();
     esp_sleep_enable_ext0_wakeup(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), 0);
     esp_deep_sleep_start();
 }
@@ -640,6 +683,7 @@ void Application::EnterManualSleep() {
     esp_wifi_stop();
     UpdateStatusBarForUi();
     vTaskDelay(pdMS_TO_TICKS(300));
+    Board::GetInstance().PrepareForDeepSleep();
     esp_sleep_enable_ext0_wakeup(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), 0);
     esp_deep_sleep_start();
 }
@@ -649,6 +693,7 @@ void Application::Run() {
         if (rawdraw_ui_manager_) {
             rawdraw_ui_manager_->PumpClockRefresh();
         }
+        PumpQuickSleep();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

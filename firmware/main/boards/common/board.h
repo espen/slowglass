@@ -76,6 +76,8 @@ public:
     virtual bool IsFactoryTestMode() const { return false; }
     virtual void EnterFactoryTestFlow() {}
     virtual void FlashActivityLed() {}
+    // Cut peripheral rails right before esp_deep_sleep_start().
+    virtual void PrepareForDeepSleep() {}
     virtual void SetNetworkEventCallback(NetworkEventCallback callback) { (void)callback; }
     virtual const char* GetNetworkStateIcon() = 0;
     virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging);

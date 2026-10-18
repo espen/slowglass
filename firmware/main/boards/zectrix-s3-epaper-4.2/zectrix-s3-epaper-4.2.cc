@@ -257,6 +257,20 @@ public:
         }
     }
 
+    // Audio is unused by the dashboard and its rail otherwise stays held on
+    // through deep sleep. VBAT stays on: it is the power latch. All rails are
+    // re-enabled by InitializePower()/Init on the next boot.
+    void PrepareForDeepSleep() override {
+        if (nfc_) {
+            nfc_->PowerOff();
+        }
+        if (power_ != nullptr) {
+            power_->PowerAmpOff();
+            power_->PowerAudioOff();
+            power_->PowerEpdOff();
+        }
+    }
+
 private:
     static int64_t GetNowMs() {
         return esp_timer_get_time() / 1000;

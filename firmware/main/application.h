@@ -57,12 +57,19 @@ private:
     AudioService audio_service_;
     std::unique_ptr<ui::RawDrawUiManager> rawdraw_ui_manager_;
     esp_timer_handle_t sleep_timer_ = nullptr;
+    // Battery timer wake with no user input: sleep as soon as fetches and the
+    // panel refresh are done instead of holding the full awake window.
+    std::atomic<bool> quick_sleep_{false};
+    std::atomic<bool> data_started_{false};
+    int quick_sleep_idle_s_ = 0;
 
     void ArmSyncSleepTimer();
     void EnterScheduledSleep();
     void EnterManualSleep();
     bool IsOnBatteryPower();
     void NoteButtonActivity();
+    void CancelQuickSleep();
+    void PumpQuickSleep();
     void EnterWifiConfigMode();
 };
 
