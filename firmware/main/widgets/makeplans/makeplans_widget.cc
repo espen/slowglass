@@ -2,7 +2,7 @@
  * @file makeplans_widget.cc
  * @brief MakePlans door-sign widget
  *
- * Owns the full-bleed door-sign page, the "makeplans" data source (5-minute
+ * Owns the full-bleed door-sign page, the "makeplans" data source (15-minute
  * default, registered by makeplans_api_init once paired), the pairing web
  * UI (/makeplans + /api/makeplans), and the battery-wake hook that flips the
  * sign exactly on booking boundaries.

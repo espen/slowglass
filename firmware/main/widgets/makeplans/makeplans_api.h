@@ -9,14 +9,15 @@
  *    for a signed cookie valid 365 days. The code is entered via the LAN
  *    config endpoint (/api/makeplans); the cookie never leaves the device.
  *  - Data: GET /api/v1/bookings/room_display/events?resource_id=N returns
- *    today's bookings + events for one resource. Recommended poll: 5 min.
+ *    today's bookings + events for one resource. Default poll: 15 min,
+ *    user-adjustable on the /makeplans page.
  *
  * Config lives in NVS namespace "makeplans": account (subdomain), resource
  * (id), cookie (opaque signed value), room (cached resource title), tzoff
  * (last seen UTC offset of the room, seconds).
  *
  * The data source only registers once paired, so an unconfigured device
- * never wakes on the 5-minute door-sign cadence.
+ * never wakes on the door-sign cadence.
  */
 
 #ifndef MAKEPLANS_API_H
@@ -59,7 +60,7 @@ enum class MakePlansPairResult {
 
 /**
  * @brief Install the schedule callback; registers the "makeplans" data
- * source (5-minute default) if the device is already paired. Call once the
+ * source (kMakePlansDefaultIntervalMinutes) if the device is already paired. Call once the
  * network is up, before data_sources_start().
  */
 void makeplans_api_init(MakePlansCallback callback);
@@ -70,6 +71,9 @@ bool makeplans_api_fetch_now();
 
 /** account + resource + cookie all present in NVS. */
 bool makeplans_is_configured();
+
+/** Default poll cadence; NVS "datasrc"/"makeplans" overrides it. */
+constexpr int kMakePlansDefaultIntervalMinutes = 15;
 std::string makeplans_get_account();
 std::string makeplans_get_resource();
 

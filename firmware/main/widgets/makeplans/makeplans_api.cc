@@ -770,7 +770,7 @@ static void PairTask(void* arg) {
 
 static void EnsureRegistered() {
     if (s_registered) return;
-    data_source_register({"makeplans", 5, []() { DoFetch(); }});
+    data_source_register({"makeplans", kMakePlansDefaultIntervalMinutes, []() { DoFetch(); }});
     s_registered = true;
 }
 
@@ -794,7 +794,7 @@ MakePlansPairResult makeplans_pair(const std::string& account,
 
     if (job.result == MakePlansPairResult::Ok) {
         EnsureRegistered();
-        data_sources_start();  // arms the 5-min timer if this is the first pair
+        data_sources_start();  // arms the poll timer if this is the first pair
     }
     return job.result;
 }
@@ -810,7 +810,7 @@ void makeplans_api_init(MakePlansCallback callback) {
     }
     s_callback = callback;
     s_initialized = true;
-    // Only paired devices join the 5-minute cadence; this keeps the battery
+    // Only paired devices join the door-sign cadence; this keeps the battery
     // sleep cycle of a non-door-sign device unaffected.
     if (makeplans_is_configured()) {
         EnsureRegistered();

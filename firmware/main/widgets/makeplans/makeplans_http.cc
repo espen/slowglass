@@ -8,6 +8,7 @@
 
 #include "widgets/makeplans/makeplans_http.h"
 
+#include "common/data_source.h"
 #include "common/httpd_helpers.h"
 #include "widgets/makeplans/makeplans_api.h"
 #include "settings.h"
@@ -24,6 +25,14 @@ namespace widgets {
 namespace {
 
 const char* kTag = "MakePlansHttp";
+constexpr int kMaxIntervalMinutes = 240;
+
+// Effective poll interval; read from NVS directly so it is shown (and
+// settable) before pairing registers the data source.
+int IntervalMinutes() {
+    Settings nvs("datasrc", false);
+    return nvs.GetInt("makeplans", kMakePlansDefaultIntervalMinutes);
+}
 
 // Pairing page for the MakePlans door sign, served at /makeplans. Pure
 // client of /api/makeplans — same calls that work from curl.
@@ -31,7 +40,7 @@ const char kMakePlansHtml[] = R"HTML(
 <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Door Sign Pairing</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <style>
-*{box-sizing:border-box}body{margin:0;background:#ece8dc;color:#171717;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}.app{max-width:440px;margin:0 auto;padding:12px}.brand{font-weight:800;font-size:18px;margin-bottom:10px}.panel{background:#fff;border:2px solid #111;border-radius:6px;box-shadow:3px 3px 0 #111;margin-bottom:12px;padding:12px}.status{font-weight:700}.status.ok{color:#0a7d2c}.status.err{color:#c81e1e}label{display:block;font-weight:700;margin:10px 0 4px}input{width:100%;border:2px solid #111;border-radius:4px;padding:8px;font-size:15px;background:#fafafa}.hint{color:#555;font-size:12px;margin-top:3px}.row{display:flex;gap:8px;margin-top:14px}.btn{flex:1;border:2px solid #111;background:#ff3b30;color:#fff;border-radius:5px;padding:10px;font-weight:800;font-size:14px;box-shadow:2px 2px 0 #111}.btn.secondary{background:#fff;color:#111;flex:0 0 auto}.btn:disabled{opacity:.45}.note{border:2px solid #111;background:#fffbe6;border-radius:6px;padding:10px;box-shadow:3px 3px 0 #111;line-height:1.5;font-size:13px}
+*{box-sizing:border-box}body{margin:0;background:#ece8dc;color:#171717;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}.app{max-width:440px;margin:0 auto;padding:12px}.brand{font-weight:800;font-size:18px;margin-bottom:10px}.panel{background:#fff;border:2px solid #111;border-radius:6px;box-shadow:3px 3px 0 #111;margin-bottom:12px;padding:12px}.status{font-weight:700}.status.ok{color:#0a7d2c}.status.err{color:#c81e1e}label{display:block;font-weight:700;margin:10px 0 4px}input,select{width:100%;border:2px solid #111;border-radius:4px;padding:8px;font-size:15px;background:#fafafa}.hint{color:#555;font-size:12px;margin-top:3px}.row{display:flex;gap:8px;margin-top:14px}.btn{flex:1;border:2px solid #111;background:#ff3b30;color:#fff;border-radius:5px;padding:10px;font-weight:800;font-size:14px;box-shadow:2px 2px 0 #111}.btn.secondary{background:#fff;color:#111;flex:0 0 auto}.btn:disabled{opacity:.45}.note{border:2px solid #111;background:#fffbe6;border-radius:6px;padding:10px;box-shadow:3px 3px 0 #111;line-height:1.5;font-size:13px}
 </style></head><body><main class="app">
 <div class="brand">Door Sign Pairing</div>
 <div class="panel"><div class="status" id="status">Loading...</div></div>
@@ -46,10 +55,17 @@ const char kMakePlansHtml[] = R"HTML(
 <div class="row"><button class="btn" id="pair">Pair</button>
 <button type="button" class="btn secondary" id="unpair">Unpair</button></div>
 </form>
+<div class="panel">
+<label for="interval" style="margin-top:0">Refresh every</label>
+<select id="interval"><option value="5">5 minutes</option><option value="10">10 minutes</option>
+<option value="15">15 minutes</option><option value="30">30 minutes</option>
+<option value="60">60 minutes</option></select>
+<div class="hint" id="interval_hint">How often the sign fetches new bookings. Shorter drains the battery faster; the sign still flips on time at booking start/end.</div>
+</div>
 <div class="note"><b>Where is the code?</b> In MakePlans admin open the resource
 (room) &rarr; Room display &rarr; generate a pairing code. The 6-digit code is
-valid for 10 minutes. After pairing, the sign fetches today's schedule every
-5 minutes; set it as the home page via <code>/api/pages</code>.</div>
+valid for 10 minutes. After pairing, the sign fetches today's schedule at the
+interval above; set it as the home page via <code>/api/pages</code>.</div>
 <script>
 var S=document.getElementById('status');
 function show(t,cls){S.textContent=t;S.className='status'+(cls?' '+cls:'')}
@@ -57,7 +73,10 @@ function refresh(){fetch('/api/makeplans').then(function(r){return r.json()}).th
 if(j.paired){show('Paired: '+j.account+'.makeplans.com, resource '+j.resource,'ok');
 document.getElementById('account').value=j.account;
 document.getElementById('resource').value=j.resource;}
-else show('Not paired','err');}).catch(function(){show('Device unreachable','err')})}
+else show('Not paired','err');
+var I=document.getElementById('interval'),v=String(j.interval_min);
+if(!I.querySelector('option[value="'+v+'"]')){var o=document.createElement('option');
+o.value=v;o.textContent=v+' minutes';I.appendChild(o)}I.value=v;}).catch(function(){show('Device unreachable','err')})}
 document.getElementById('form').addEventListener('submit',function(e){e.preventDefault();
 show('Pairing... (takes a few seconds)');
 document.getElementById('pair').disabled=true;
@@ -75,6 +94,11 @@ invalid_input:'Check account / resource / code format'};
 show('Failed: '+(m[j.error]||j.error),'err')}})
 .catch(function(){document.getElementById('pair').disabled=false;
 show('Request failed - is the device still on this network?','err')})});
+document.getElementById('interval').addEventListener('change',function(){
+var H=document.getElementById('interval_hint');
+fetch('/api/makeplans',{method:'POST',body:JSON.stringify({interval_min:parseInt(this.value,10)})})
+.then(function(r){return r.json()}).then(function(j){H.textContent=j.success?'Saved.':'Could not save: '+j.error})
+.catch(function(){H.textContent='Could not save - device unreachable'})});
 document.getElementById('unpair').addEventListener('click',function(){
 fetch('/api/makeplans',{method:'POST',body:JSON.stringify({unpair:true})})
 .then(function(){refresh()})});
@@ -96,7 +120,8 @@ esp_err_t MakePlansPageHandler(httpd_req_t* req) {
 // GET returns {"paired":..,"account":..,"resource":..,"success":true}.
 // POST {"account":"x","resource_id":1,"code":"123456"} runs the pairing flow
 // against {account}.makeplans.com (blocking, a few seconds; the TLS work runs
-// in its own worker task). POST {"unpair":true} forgets the cookie. The
+// in its own worker task). POST {"unpair":true} forgets the cookie.
+// POST {"interval_min":15} sets the poll interval (1-240, applies live). The
 // long-lived pairing cookie itself never crosses this API — only the
 // short-lived 6-digit code does.
 esp_err_t MakePlansConfigHandler(httpd_req_t* req) {
@@ -110,6 +135,21 @@ esp_err_t MakePlansConfigHandler(httpd_req_t* req) {
         cJSON* unpair = cJSON_GetObjectItemCaseSensitive(root, "unpair");
         cJSON* fetch = cJSON_GetObjectItemCaseSensitive(root, "fetch");
         cJSON* nfc_url = cJSON_GetObjectItemCaseSensitive(root, "nfc_url");
+        cJSON* interval = cJSON_GetObjectItemCaseSensitive(root, "interval_min");
+        if (interval != nullptr) {
+            if (!cJSON_IsNumber(interval) || interval->valueint < 1 ||
+                interval->valueint > kMaxIntervalMinutes) {
+                cJSON_Delete(root);
+                web::SendJson(req, "{\"success\":false,\"error\":\"invalid_interval\"}");
+                return ESP_OK;
+            }
+            {
+                Settings nvs("datasrc", true);
+                nvs.SetInt("makeplans", interval->valueint);
+            }
+            data_sources_reload();
+            ESP_LOGI(kTag, "MakePlans interval set: %d min", interval->valueint);
+        }
         if (cJSON_IsString(nfc_url)) {
             // Booking URL the NFC tag should serve ("" = default
             // https://{account}.makeplans.com/). Tag rewrites on next fetch.
@@ -195,6 +235,7 @@ esp_err_t MakePlansConfigHandler(httpd_req_t* req) {
     json += makeplans_is_configured() ? "true" : "false";
     json += ",\"account\":\"" + makeplans_get_account() + "\"";
     json += ",\"resource\":\"" + makeplans_get_resource() + "\"";
+    json += ",\"interval_min\":" + std::to_string(IntervalMinutes());
     if (const MakePlansSchedule* last = makeplans_api_get_last()) {
         auto escape = [](const std::string& s) {
             std::string out;

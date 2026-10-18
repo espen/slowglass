@@ -113,8 +113,9 @@ cause this), set it manually on the web UI's `/weather` page — see below.
 
 Shows today's bookings and occupancy for a MakePlans room. Pair it from
 the web UI's `/makeplans` page with a pairing code (see below). Once
-paired it refreshes every 5 minutes, and on battery it wakes exactly at
-booking boundaries so the sign flips on time.
+paired it refreshes every 15 minutes by default (change it under
+**Refresh every** on the `/makeplans` page), and on battery it wakes
+exactly at booking boundaries so the sign flips on time.
 
 - **BOOT long press** — fetch the schedule right now.
 
@@ -260,7 +261,7 @@ always included in the Apps menu automatically. Home/enabled changes apply
 immediately — no reboot needed.
 
 Interval keys are data-source names: `weather` (default 60 min) and
-`makeplans` (default 5 min, listed once the door sign is paired). An
+`makeplans` (default 15 min, listed once the door sign is paired). An
 interval of `0` disables that source.
 
 ## Power and sleep

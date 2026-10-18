@@ -8,8 +8,8 @@ and a passive NFC tag that opens the room's booking page.
 
 - `makeplans_widget.cc` — the `WidgetDef`: page registration, network-up
   wiring, HTTP registration, LAN-URL hook, battery-wake hook.
-- `makeplans_api.{h,cc}` — room display API client (pairing + 5-minute
-  schedule polling via the `makeplans` data source).
+- `makeplans_api.{h,cc}` — room display API client (pairing + 15-minute
+  default schedule polling via the `makeplans` data source).
 - `makeplans_renderer.{h,cc}` — the door-sign page renderer.
 - `makeplans_http.{h,cc}` — `/makeplans` pairing page + `GET/POST
   /api/makeplans`.
