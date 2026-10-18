@@ -273,11 +273,17 @@ and keeps it up, and an active slideshow also prevents sleep. With the
 server stopped and the slideshow off, it deep-sleeps after an idle period
 (default 30 minutes) and wakes only when you press **BOOT**.
 
-**On battery** it duty-cycles: it stays awake for about 4 minutes after
-waking, then deep-sleeps until the next scheduled data fetch (at most 60
-minutes; the door sign wakes earlier around booking boundaries). The image
-on the panel stays visible while asleep — that's the point of e-paper.
-Press **BOOT** at any time to wake it early.
+**On battery** it duty-cycles. A scheduled wake fetches the data for the
+page on screen, redraws, and goes straight back to sleep (well under a
+minute). It then sleeps for that page's refresh interval — 60 minutes for
+weather, 15 for the door sign (which also wakes at booking boundaries),
+60 for pages without live data. Waking with **BOOT**, or pressing any
+button during a wake, keeps it up for about 4 minutes so you can use it.
+The image on the panel stays visible while asleep — that's the point of
+e-paper.
+
+Only the page on screen fetches data, on USB and battery alike; other
+pages refresh when you switch to them if their data is out of date.
 
 **Maximum battery life:** pick a photo (or page) you want displayed, turn
 the slideshow off, then use Settings → Power Saving → **Sleep now** (or
